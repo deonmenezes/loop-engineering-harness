@@ -20,6 +20,9 @@ fn d_deny() -> Vec<String> {
          r"\bssh\b".into(), r">\s*/dev/".into()]
 }
 fn d_judge() -> String { d_model() }
+fn d_max_cycles() -> u32 { 12 }
+fn d_max_attempts() -> u32 { 2 }
+fn d_step_verify() -> String { "judge".into() }
 fn d_threshold() -> f64 { 7.0 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,6 +99,27 @@ pub enum FlowItem {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct LoopSpec {
+    #[serde(default = "d_model")]
+    pub planner_model: String,
+    #[serde(default = "d_max_cycles")]
+    pub max_cycles: u32,
+    #[serde(default = "d_max_attempts")]
+    pub max_attempts_per_step: u32,
+    #[serde(default = "d_true")]
+    pub replan_on_failure: bool,
+    #[serde(default = "d_step_verify")]
+    pub step_verify: String,
+}
+impl Default for LoopSpec {
+    fn default() -> Self {
+        Self { planner_model: d_model(), max_cycles: d_max_cycles(),
+               max_attempts_per_step: d_max_attempts(),
+               replan_on_failure: true, step_verify: d_step_verify() }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct HarnessSpec {
     pub name: String,
     #[serde(default)]
@@ -112,6 +136,8 @@ pub struct HarnessSpec {
     pub guardrails: GuardrailSpec,
     #[serde(default, rename = "eval")]
     pub eval_spec: EvalSpec,
+    #[serde(default, rename = "loop")]
+    pub loop_spec: LoopSpec,
 }
 
 impl HarnessSpec {

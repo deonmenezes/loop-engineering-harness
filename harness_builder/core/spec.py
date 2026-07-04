@@ -53,6 +53,16 @@ class GuardrailSpec:
 
 
 @dataclass
+class LoopSpec:
+    """The EXTERNAL loop (outside the harness): plan-driven execution."""
+    planner_model: str = "anthropic/claude-sonnet-4-6"
+    max_cycles: int = 12            # total harness invocations across the loop
+    max_attempts_per_step: int = 2  # retries before replanning around a step
+    replan_on_failure: bool = True
+    step_verify: str = "judge"      # "judge" (LLM per-step gate) | "none"
+
+
+@dataclass
 class EvalSpec:
     quality_criteria: list[str] = field(default_factory=list)  # judged by LLM
     judge_model: str = "anthropic/claude-sonnet-4-6"
@@ -70,6 +80,7 @@ class HarnessSpec:
     memory: MemorySpec = field(default_factory=MemorySpec)
     guardrails: GuardrailSpec = field(default_factory=GuardrailSpec)
     eval: EvalSpec = field(default_factory=EvalSpec)
+    loop: LoopSpec = field(default_factory=LoopSpec)
 
     # ------------------------------------------------------------------ io
     @staticmethod
@@ -90,6 +101,7 @@ class HarnessSpec:
             memory=MemorySpec(**d.get("memory", {})),
             guardrails=GuardrailSpec(**d.get("guardrails", {})),
             eval=EvalSpec(**d.get("eval", {})),
+            loop=LoopSpec(**d.get("loop", {})),
         )
         spec.validate()
         return spec

@@ -2,6 +2,7 @@
 //! with the Python CLI, same harness.yaml artifacts, single static binary.
 
 mod engine;
+mod external_loop;
 mod providers;
 mod runtime;
 mod spec;
@@ -53,6 +54,22 @@ enum Cmd {
         #[arg(long)]
         model_override: Option<String>,
     },
+    /// Run the EXTERNAL loop: plan a goal into steps, one harness run per
+    /// step, per-step gate, replan on failure. Resumable.
+    Loop {
+        harness: PathBuf,
+        #[arg(long)]
+        goal: String,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        #[arg(long)]
+        max_cycles: Option<u32>,
+        /// discard saved loop state and replan from scratch
+        #[arg(long)]
+        fresh: bool,
+        #[arg(long)]
+        model_override: Option<String>,
+    },
     /// List bundled domain templates
     Templates,
     /// Copy a bundled template into ./harnesses
@@ -96,6 +113,10 @@ fn main() -> Result<()> {
                    verify_cmd, model_override } =>
             run(&harness, &task, workspace, r#loop, max_iterations,
                 verify_cmd.as_deref(), model_override.as_deref()),
+        Cmd::Loop { harness, goal, workspace, max_cycles, fresh,
+                    model_override } =>
+            outer_loop(&harness, &goal, workspace, max_cycles, fresh,
+                       model_override.as_deref()),
         Cmd::Templates => templates(),
         Cmd::Use { name } => use_template(&name),
         Cmd::Inspect { harness } => inspect(&harness),
@@ -132,6 +153,32 @@ fn run(harness: &Path, task: &str, workspace: Option<PathBuf>, do_loop: bool,
         println!("\n{}\nFINAL REPLY\n{}\n\n{}", "═".repeat(70),
                  "═".repeat(70), reply);
     }
+    Ok(())
+}
+
+fn outer_loop(harness: &Path, goal: &str, workspace: Option<PathBuf>,
+              max_cycles: Option<u32>, fresh: bool,
+              model_override: Option<&str>) -> Result<()> {
+    let (mut spec, harness_dir) = HarnessSpec::load(harness)?;
+    if let Some(m) = model_override {
+        for a in &mut spec.agents { a.model = m.to_string(); }
+        spec.eval_spec.judge_model = m.to_string();
+        spec.memory.summarizer_model = m.to_string();
+        spec.loop_spec.planner_model = m.to_string();
+    }
+    if let Some(n) = max_cycles { spec.loop_spec.max_cycles = n; }
+    let ws = workspace.unwrap_or_else(|| PathBuf::from("workspace")
+        .join(&spec.name));
+
+    let state = external_loop::run_external_loop(
+        &spec, &harness_dir, goal, fresh, |t| {
+            let orch = engine::Orchestrator::new(&spec, &harness_dir,
+                Some(ws.clone()))?;
+            orch.run(t)
+        })?;
+    println!("\n{}\nEXTERNAL LOOP: {}/{} steps complete\n{}",
+             "═".repeat(70), state.done_count(), state.steps.len(),
+             "═".repeat(70));
     Ok(())
 }
 

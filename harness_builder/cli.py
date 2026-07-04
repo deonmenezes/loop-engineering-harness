@@ -66,6 +66,30 @@ def cmd_run(args):
         print(one_run(args.task))
 
 
+def cmd_loop(args):
+    from .core.spec import HarnessSpec
+    from .core.external_loop import run_external_loop
+    from .runtime.orchestrator import Orchestrator
+    spec = HarnessSpec.load(args.harness)
+    hdir = Path(args.harness) if Path(args.harness).is_dir() else Path(args.harness).parent
+    if args.model_override:
+        for a in spec.agents:
+            a.model = args.model_override
+        spec.eval.judge_model = args.model_override
+        spec.memory.summarizer_model = args.model_override
+        spec.loop.planner_model = args.model_override
+    if args.max_cycles:
+        spec.loop.max_cycles = args.max_cycles
+
+    def one_run(task_text: str) -> str:
+        return Orchestrator(spec, hdir, workspace=args.workspace).run(task_text)
+
+    state = run_external_loop(spec=spec, harness_dir=hdir, goal=args.goal,
+                              run_harness_fn=one_run, fresh=args.fresh)
+    done = sum(s.status == "done" for s in state.steps)
+    print(f"\n{'═'*70}\nEXTERNAL LOOP: {done}/{len(state.steps)} steps complete\n{'═'*70}")
+
+
 def cmd_templates(_args):
     print("Bundled domain harness templates (harness use <name>):\n")
     for d in sorted(TEMPLATES_DIR.iterdir()):
@@ -136,6 +160,17 @@ def main():
     r.add_argument("--model-override", default=None,
                    help="force every agent onto one provider/model, e.g. ollama/llama3.1")
     r.set_defaults(fn=cmd_run)
+
+    lp = sub.add_parser("loop", help="run the EXTERNAL loop: plan a goal into "
+                        "steps, one harness run per step, resumable")
+    lp.add_argument("harness")
+    lp.add_argument("--goal", required=True)
+    lp.add_argument("--workspace", default=None)
+    lp.add_argument("--max-cycles", type=int, default=None)
+    lp.add_argument("--fresh", action="store_true",
+                    help="discard saved loop state and replan from scratch")
+    lp.add_argument("--model-override", default=None)
+    lp.set_defaults(fn=cmd_loop)
 
     t = sub.add_parser("templates", help="list bundled domain templates")
     t.set_defaults(fn=cmd_templates)

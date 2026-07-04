@@ -39,7 +39,9 @@ BANNER = r"""[bold red]
 HELP = """\
 [bold]Chat[/]
   <plain text>              run it as a task on the active harness
-  /loop <task>              same, wrapped in the goal loop (eval gate + retries)
+  /loop <task>              same, wrapped in the retry goal loop (eval gate)
+  /goal <goal>              EXTERNAL loop: plan -> checklist -> one harness run
+                            per step -> check off -> replan on failure (resumable)
 
 [bold]Harnesses[/]
   /build <prompt>           architect a new harness from a description
@@ -92,7 +94,7 @@ class Shell:
                 "anthropic/claude-haiku-4-5-20251001": None,
                 "openai/gpt-4o": None, "groq/llama-3.3-70b-versatile": None,
                 "ollama/llama3.1": None},
-            "/verify": None, "/iterations": None,
+            "/goal": None, "/verify": None, "/iterations": None,
             "/export": {t: None for t in EXPORTERS},
             "/traces": None, "/help": None, "/quit": None,
         })
@@ -266,6 +268,27 @@ class Shell:
             return
         console.print(Panel(Markdown(reply), title="reply", border_style="red"))
 
+    def run_goal(self, goal: str):
+        if not self._need_harness():
+            return
+        from .core.external_loop import run_external_loop
+        from .runtime.orchestrator import Orchestrator
+
+        def one_run(t: str) -> str:
+            return Orchestrator(self.spec, self.harness_dir).run(t)
+
+        console.rule(f"[bold]{self.spec.name}[/] · external loop")
+        try:
+            state = run_external_loop(spec=self.spec, harness_dir=self.harness_dir,
+                                      goal=goal, run_harness_fn=one_run)
+        except Exception as e:
+            console.print(f"[red]loop failed:[/] {type(e).__name__}: {e}")
+            return
+        done = sum(s.status == "done" for s in state.steps)
+        console.print(Panel(state.render(),
+                            title=f"external loop · {done}/{len(state.steps)} done",
+                            border_style="magenta"))
+
     # -------------------------------------------------------------- loop
     def repl(self):
         console.print(BANNER)
@@ -295,6 +318,9 @@ class Shell:
                     continue
                 if cmd == "loop":
                     self.run_task(arg, loop=True)
+                    continue
+                if cmd == "goal":
+                    self.run_goal(arg)
                     continue
                 fn = getattr(self, f"do_{cmd}", None)
                 if fn:

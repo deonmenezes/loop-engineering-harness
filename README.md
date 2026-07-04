@@ -1,11 +1,29 @@
-# Harness Builder
+# Loop Engineer Builder
 
-**Prompt in → domain-specific AI agent harness out.**
+**Prompt in → loop-engineered agent system out.**
 
-An L3 meta-factory: you describe a domain in one paragraph, an architect agent
-designs a specialized agent *team* — pattern, roles, system prompts, tools,
-skills, quality gate — and saves it as a runnable harness. Any harness runs on
-any LLM provider.
+The stack, loops on loops (prompt → context → harness → loop engineering):
+
+```
+┌─ EXTERNAL LOOP ─────────────────────────────────────┐   1. ✓ research topic
+│  goal → planner → numbered checklist                │   2. ✓ draft report
+│  ┌─ HARNESS (per checklist item, fresh) ─────────┐  │   3. · polish
+│  │  ┌─ AGENT LOOP ────────────────────────────┐  │  │   4. · publish
+│  │  │  ┌─ CONTEXT ─────────────┐              │  │  │
+│  │  │  │ model ⇄ tools         │ ⇄ guardrails │  │  │
+│  │  │  └───────────────────────┘              │  │  │
+│  │  └─────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────┘  │
+│  per-item gate → ✓ check off → replan on failure    │
+└──────────────────────────────────────────────────────┘
+```
+
+You describe a domain in one paragraph; an architect agent designs the agent
+team (pattern, roles, system prompts, tools, skills, quality gate) as a
+runnable harness — then the **external loop** drives that harness through a
+planned checklist toward goals far bigger than any single run. The plan lives
+in a FILE, not a context window: kill the process, rerun the same goal, it
+resumes exactly where it stopped.
 
 ```bash
 harness build "Build a harness for deep research. I need an agent team that can
@@ -14,8 +32,12 @@ community sentiment — then cross-validate findings and produce a report."
 
 harness run harnesses/deep_research --task "Solid-state batteries: state of the art in 2026"
 
-# wrap any run in a goal loop: judge scores it, failures feed back, re-runs until it passes
+# retry goal loop: judge scores the run, failures feed back until it passes
 harness run harnesses/deep_research --task "..." --loop --max-iterations 3
+
+# THE EXTERNAL LOOP: plan the goal into a checklist, one fresh harness run per
+# item, per-item gate, ✓ check-off, replan on failure — fully resumable
+harness loop harnesses/deep_research --goal "publish a definitive report on X"
 ```
 
 ## Architecture
@@ -146,7 +168,8 @@ matching prompts in `examples/prompts.md`.
 harness_builder/
 ├── providers/api.py        unified multi-provider LLM API (normalized responses)
 ├── core/
-│   ├── spec.py             HarnessSpec: the YAML contract builder ↔ runtime
+│   ├── spec.py             HarnessSpec (+ LoopSpec): the YAML contract builder ↔ runtime
+│   ├── external_loop.py    the EXTERNAL loop: plan → checklist → per-step harness runs
 │   ├── loop.py             inner agent loop (provider-agnostic, guardrailed)
 │   ├── ralph.py            outer goal loop with eval gate
 │   ├── memory.py           working / procedural / semantic / episodic + summarizer
