@@ -8,6 +8,8 @@ harness — CLI for the meta-factory.
   harness templates
   harness use deep_research            # copy a bundled template into ./harnesses
   harness inspect harnesses/deep_research
+  harness export harnesses/deep_research --to claude-code
+  harness                              # no args: launch the interactive TUI
 """
 
 from __future__ import annotations
@@ -83,6 +85,15 @@ def cmd_use(args):
     print(f"copied -> {dst}\nRun it:\n  harness run {dst} --task \"...\"")
 
 
+def cmd_export(args):
+    from .core.spec import HarnessSpec
+    from .export import export
+    spec = HarnessSpec.load(args.harness)
+    hdir = Path(args.harness) if Path(args.harness).is_dir() else Path(args.harness).parent
+    out = export(spec, hdir, args.to, args.output)
+    print(f"exported for {args.to} -> {out}/")
+
+
 def cmd_inspect(args):
     from .core.spec import HarnessSpec
     spec = HarnessSpec.load(args.harness)
@@ -134,6 +145,17 @@ def main():
     i = sub.add_parser("inspect", help="show a harness's team and gate")
     i.add_argument("harness")
     i.set_defaults(fn=cmd_inspect)
+
+    e = sub.add_parser("export", help="compile a harness into a host agent's plugin format")
+    e.add_argument("harness")
+    e.add_argument("--to", required=True, choices=["claude-code", "codex", "opencode"])
+    e.add_argument("--output", default="exports")
+    e.set_defaults(fn=cmd_export)
+
+    if len(sys.argv) == 1:          # bare `harness` -> interactive TUI
+        from .tui import main as tui_main
+        tui_main()
+        return
 
     args = p.parse_args()
     args.fn(args)

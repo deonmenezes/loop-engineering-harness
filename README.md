@@ -90,6 +90,36 @@ are just a base_url).
 
 Force a whole harness onto one model: `--model-override groq/llama-3.3-70b-versatile`.
 
+## Interactive TUI (opencode-style)
+
+Bare `harness` drops you into an interactive shell — chat-first, like opencode:
+
+```
+❯ /use deep_research
+✓ active: deep_research (fanout, 4 agents)
+❯ what changed in EU AI regulation this quarter?        # plain text = run task
+❯ /loop write the report                                # goal loop + eval gate
+❯ /model ollama/llama3.1                                # hot-swap every agent
+❯ /export claude-code                                   # compile to a plugin
+```
+
+Tab completion, persistent history (~/.harness_history), live agent progress,
+status toolbar. `/help` lists everything.
+
+## Run inside Claude Code / Codex / opencode
+
+`harness export <harness> --to <target>` compiles a harness into the host's
+native format, so the SAME team design runs inside your daily driver:
+
+| Target | What's generated | How to use |
+|---|---|---|
+| `claude-code` | real plugin: `.claude-plugin/plugin.json`, `agents/*.md` (native subagents), `skills/*/SKILL.md`, `/run-<name>` command | `claude --plugin-dir exports/<name>-plugin`, then `/run-<name> <task>` |
+| `codex` | `AGENTS.md` team charter + `prompts/<agent>.md` role briefs (Codex has no subagents — the charter orchestrates role-play with files as the message bus) | drop into repo root |
+| `opencode` | `.opencode/agent/*.md` subagents + `/run-<name>` command | drop into project, `@agent` or `/run-<name>` |
+
+Team structure, system prompts, skills, and pattern wiring port; our memory
+stores, budgets, and goal loop don't — the hosts have their own equivalents.
+
 ## Setup
 
 ```bash
