@@ -43,6 +43,8 @@ def cmd_run(args):
     if args.model_override:
         for a in spec.agents:
             a.model = args.model_override
+        spec.eval.judge_model = args.model_override
+        spec.memory.summarizer_model = args.model_override
 
     def one_run(task_text: str) -> str:
         orch = Orchestrator(spec, harness_dir, workspace=args.workspace)

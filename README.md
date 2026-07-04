@@ -173,3 +173,21 @@ templates/                  8 domain harnesses
   plus the name in `core/spec.py:PATTERNS` and the architect prompt.
 - **Better generated harnesses**: edit `builder/architect.py:ARCHITECT_SYSTEM` —
   the highest-leverage prompt in the codebase.
+
+## Rust runtime (harness-rs/)
+
+A second, drop-in runtime in Rust — same `harness.yaml` contract, same
+templates, same CLI surface (`build · run · templates · use · inspect`),
+single ~4 MB static binary, zero Python needed at runtime:
+
+```bash
+cd harness-rs && cargo build --release
+./target/release/harness use deep_research
+./target/release/harness run harnesses/deep_research --task "..." --loop
+```
+
+Differences from the Python runtime: fanout workers run on real OS threads;
+episodic memory is JSONL instead of SQLite; semantic search is token-overlap
+(embedding-free). Harnesses built by either runtime run on both — the spec is
+the contract, the runtime is a choice. Python keeps the TUI and the
+Claude-Code/Codex/opencode exporters.
