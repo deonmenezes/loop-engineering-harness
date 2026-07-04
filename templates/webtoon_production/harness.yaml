@@ -1,0 +1,109 @@
+name: webtoon_production
+description: 'Webtoon episode pipeline: story -> character design prompts -> panel layout -> dialogue
+  -> style-consistency review.'
+pattern: pipeline
+agents:
+- name: story_writer
+  role: Writes the episode's story beats and emotional arc
+  system_prompt: 'You are a webtoon story writer. Produce story.md for one episode: logline, 12-20 numbered
+    beats with rising tension and a hook ending (webtoons live or die on the scroll-stop cliffhanger),
+    character goals/stakes per scene, and tone notes. Vertical-scroll pacing: one emotional beat per screen-length.
+    Keep continuity details (names, relationships, established facts) in a continuity section others must
+    follow.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - webtoon_craft
+  max_turns: 12
+- name: character_designer
+  role: Writes precise character design prompts for the artist/image model
+  system_prompt: 'You are a character designer. From story.md, write characters.md: for each character
+    in this episode, a reusable master design prompt (face, hair, body, outfit, palette with hex codes,
+    distinguishing marks, 2-3 signature expressions) plus per-scene variation notes. Prompts must be specific
+    enough that two different artists/models would produce recognizably the same character. Never contradict
+    the continuity section.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - webtoon_craft
+  max_turns: 12
+- name: panel_planner
+  role: Plans the vertical-scroll panel layout
+  system_prompt: 'You are a panel layout planner for vertical-scroll webtoons. From story.md and characters.md,
+    write panels.md: for every beat, panel(s) with shot type (establishing/medium/close-up/insert), composition
+    and camera angle, character poses and expressions, background needs, and vertical spacing/whitespace
+    notes for pacing (big gaps = time passing or impact). Mark the money panels (the cliffhanger, the
+    emotional peak) and give them full-bleed treatment.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - webtoon_craft
+  max_turns: 12
+- name: dialogue_editor
+  role: Writes and polishes all dialogue, captions and SFX
+  system_prompt: 'You are a dialogue editor. From story.md and panels.md, write dialogue.md mapping every
+    panel to its bubbles: speaker, line, bubble type (speech/thought/shout/whisper), plus captions and
+    SFX text. Webtoon lines are short — max ~14 words per bubble, max 2-3 bubbles per panel; cut anything
+    the art already says. Keep each character''s voice distinct and consistent with story.md.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - webtoon_craft
+  max_turns: 12
+- name: style_reviewer
+  role: Reviews all artifacts against each other for consistency
+  system_prompt: 'You are the style-consistency reviewer. Read story.md, characters.md, panels.md, dialogue.md
+    and audit them against each other: continuity breaks, characters acting off-voice, design details
+    drifting between files, panels missing dialogue or vice versa, pacing dead spots, weak hook. Fix minor
+    inconsistencies directly in the files, list bigger issues in review.md with file+line references,
+    and end with a final episode summary and readiness verdict.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - webtoon_craft
+  max_turns: 12
+flow:
+- story_writer
+- character_designer
+- panel_planner
+- dialogue_editor
+- style_reviewer
+supervisor: null
+memory:
+  semantic: true
+  episodic: true
+  consolidate_after: 3
+  summarizer_model: anthropic/claude-haiku-4-5-20251001
+guardrails:
+  max_total_tokens: 300000
+  max_wall_seconds: 900
+  shell_deny_patterns:
+  - \brm\s+-rf\s+/
+  - \bsudo\b
+  - \bmkfs\b
+  - \bssh\b
+  - '>\s*/dev/'
+eval:
+  quality_criteria:
+  - story.md, characters.md, panels.md, dialogue.md, review.md all exist and cross-reference consistently
+  - episode ends on a genuine scroll-stopping hook
+  - character design prompts are specific and reusable (palette hex codes, signature features)
+  - every panel in panels.md has matching dialogue/SFX or an explicit 'silent' mark
+  - review.md documents a real consistency audit, not a rubber stamp
+  judge_model: anthropic/claude-sonnet-4-6
+  pass_threshold: 7.0

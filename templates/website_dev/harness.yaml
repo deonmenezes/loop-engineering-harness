@@ -1,0 +1,94 @@
+name: website_dev
+description: 'Full-stack website pipeline: UX design -> React/Next.js frontend -> API backend -> QA.'
+pattern: pipeline
+agents:
+- name: ux_designer
+  role: Turns requirements into wireframes, IA, and a design spec
+  system_prompt: 'You are a senior product/UX designer. From the request, produce a concrete design spec
+    as design_spec.md in the workspace: sitemap, page-by-page wireframe descriptions (layout, components,
+    states), user flows, content hierarchy, and a design-token table (colors, type scale, spacing). Be
+    specific enough that a frontend developer can build without guessing. State assumptions explicitly.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - webdev_standards
+  max_turns: 12
+- name: frontend_dev
+  role: Builds the React/Next.js frontend from the design spec
+  system_prompt: 'You are a senior frontend engineer. Read design_spec.md and implement the frontend with
+    React/Next.js conventions: components under components/, pages/app routes, semantic HTML, accessible
+    interactive elements, responsive layout, and the design tokens from the spec. Write real files to
+    the workspace. Keep components small and typed where possible. After writing, list files and sanity-check
+    imports resolve against your own file tree.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  - run_shell
+  skills:
+  - webdev_standards
+  max_turns: 12
+- name: backend_dev
+  role: Implements the API layer and data model the frontend needs
+  system_prompt: 'You are a senior backend engineer. Inspect the frontend code to derive the API contract
+    it expects, then implement it: route handlers, data model, validation, and error handling, in the
+    same stack (Next.js API routes or a small Node/Express server as appropriate). Write real files. Document
+    every endpoint (method, path, request, response, errors) in api.md.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  - run_shell
+  skills:
+  - webdev_standards
+  max_turns: 12
+- name: qa_tester
+  role: 'Verifies the build: runs checks, hunts defects, writes the QA report'
+  system_prompt: 'You are a QA engineer. Verify the project: list all files, check that imports/routes/API
+    contracts line up between frontend and backend, run whatever checks the environment allows (node --check
+    per file, tsc/build if available, otherwise static review). File findings by severity in qa_report.md:
+    blocker / major / minor, each with file, line, and suggested fix. Fix trivial defects yourself; report
+    the rest. End with a ship/no-ship verdict.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  - run_shell
+  skills:
+  - webdev_standards
+  max_turns: 12
+flow:
+- ux_designer
+- frontend_dev
+- backend_dev
+- qa_tester
+supervisor: null
+memory:
+  semantic: true
+  episodic: true
+  consolidate_after: 3
+  summarizer_model: anthropic/claude-haiku-4-5-20251001
+guardrails:
+  max_total_tokens: 300000
+  max_wall_seconds: 900
+  shell_deny_patterns:
+  - \brm\s+-rf\s+/
+  - \bsudo\b
+  - \bmkfs\b
+  - \bssh\b
+  - '>\s*/dev/'
+eval:
+  quality_criteria:
+  - design spec, frontend, backend, and QA report all exist as real files in the workspace
+  - frontend components match the design spec's pages and tokens
+  - API endpoints implemented match what the frontend calls, documented in api.md
+  - qa_report.md lists concrete verified checks with a ship/no-ship verdict
+  - code follows consistent, idiomatic React/Next.js conventions
+  judge_model: anthropic/claude-sonnet-4-6
+  pass_threshold: 7.0

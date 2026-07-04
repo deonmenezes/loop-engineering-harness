@@ -1,0 +1,16 @@
+[project]
+name = "harness-builder"
+version = "0.1.0"
+description = "Prompt -> domain-specific AI agent harness. Multi-provider, memory-equipped, goal-loop driven."
+requires-python = ">=3.10"
+dependencies = ["anthropic>=0.40.0", "openai>=1.50.0", "pyyaml>=6.0", "python-dotenv>=1.0.0"]
+
+[project.scripts]
+harness = "harness_builder.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["harness_builder*"]

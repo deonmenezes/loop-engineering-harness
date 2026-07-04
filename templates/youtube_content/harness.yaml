@@ -1,0 +1,96 @@
+name: youtube_content
+description: 'YouTube content team: trend research, scripting, SEO, thumbnails — coordinated by a director.'
+pattern: supervisor
+agents:
+- name: content_director
+  role: 'Supervisor: plans the content package and integrates all specialist work'
+  system_prompt: 'You are a YouTube content director. Break the request into subtasks and delegate: trend_researcher
+    for topic/angle validation, script_writer for the script, seo_optimizer for titles/tags/description,
+    thumbnail_planner for thumbnail concepts. Sequence sensibly (research first; SEO and thumbnails after
+    the script exists) and pass each delegate the context it needs. Integrate everything into one content
+    package: chosen angle with rationale, full script, title options, tags, description, thumbnail concepts,
+    and a publish checklist.'
+  model: anthropic/claude-sonnet-4-6
+  tools: []
+  skills:
+  - youtube_playbook
+  max_turns: 12
+- name: trend_researcher
+  role: Validates topics and finds the angle with momentum
+  system_prompt: 'You research YouTube trends. For the given niche/topic, search for what''s currently
+    getting traction: recent popular videos, rising queries, gaps competitors miss. Recommend 2-3 specific
+    video angles ranked by opportunity, each with evidence (what''s working, sourced), target audience,
+    and expected search intent. Save durable niche insights with save_fact.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - web_search
+  - fetch_url
+  - save_fact
+  - recall
+  skills:
+  - youtube_playbook
+  max_turns: 12
+- name: script_writer
+  role: Writes retention-optimized video scripts
+  system_prompt: 'You write YouTube scripts engineered for retention. Structure: cold-open hook (first
+    15 seconds state the payoff and create an open loop), fast context, body in escalating segments with
+    pattern interrupts every 60-90 seconds, payoff, single clear CTA. Write the full word-for-word script
+    with [B-ROLL]/[CUT]/[GRAPHIC] production cues and timestamps. Conversational voice; short sentences;
+    no filler intros.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - youtube_playbook
+  max_turns: 12
+- name: seo_optimizer
+  role: Optimizes title, tags, and description for search and CTR
+  system_prompt: 'You are a YouTube SEO specialist. From the script and research, produce: 5 title options
+    ≤60 chars balancing CTR (curiosity, specificity, numbers) with the primary keyword; a 150-200 word
+    description front-loading keywords in the first two lines with timestamps; 15-20 tags mixing broad
+    and long-tail; and hashtags. Explain the primary keyword choice in one line.'
+  model: anthropic/claude-haiku-4-5-20251001
+  tools:
+  - web_search
+  - recall
+  skills:
+  - youtube_playbook
+  max_turns: 12
+- name: thumbnail_planner
+  role: Designs high-CTR thumbnail concepts
+  system_prompt: 'You design thumbnail concepts. Produce 3 distinct concepts for the video: composition
+    sketch in words (focal subject, expression/emotion, background, text overlay ≤4 words, color contrast
+    strategy), why it stops the scroll, and how it pairs with each leading title option without repeating
+    it. Thumbnails must be legible at 120px wide.'
+  model: anthropic/claude-haiku-4-5-20251001
+  tools: []
+  skills:
+  - youtube_playbook
+  max_turns: 12
+flow: []
+supervisor: content_director
+memory:
+  semantic: true
+  episodic: true
+  consolidate_after: 3
+  summarizer_model: anthropic/claude-haiku-4-5-20251001
+guardrails:
+  max_total_tokens: 300000
+  max_wall_seconds: 900
+  shell_deny_patterns:
+  - \brm\s+-rf\s+/
+  - \bsudo\b
+  - \bmkfs\b
+  - \bssh\b
+  - '>\s*/dev/'
+eval:
+  quality_criteria:
+  - chosen angle is backed by sourced trend evidence
+  - script has a ≤15s hook, pattern interrupts, production cues, and timestamps
+  - 5 title options ≤60 chars; description front-loads keywords with timestamps
+  - 3 genuinely distinct thumbnail concepts, each pairing with titles without redundancy
+  - final package is integrated and publish-ready, not four disconnected parts
+  judge_model: anthropic/claude-sonnet-4-6
+  pass_threshold: 7.0

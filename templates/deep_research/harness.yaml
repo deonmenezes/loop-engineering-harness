@@ -1,0 +1,93 @@
+name: deep_research
+description: 'Multi-angle research team: web + academic + community, cross-validated into a report.'
+pattern: fanout
+agents:
+- name: web_researcher
+  role: Investigates the topic across news, industry and reference sources
+  system_prompt: 'You are a rigorous web researcher. Given a topic, run multiple distinct searches from
+    different angles (current state, history, key players, controversies, data). Fetch the most authoritative
+    results for depth. For every claim you report, attach the source URL. Distinguish established fact
+    from vendor claims and speculation. Deliver structured findings: key facts (sourced), open questions,
+    and confidence notes.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - web_search
+  - fetch_url
+  - save_fact
+  - recall
+  skills:
+  - research_playbook
+  max_turns: 12
+- name: academic_researcher
+  role: 'Finds scholarly and technical sources: papers, preprints, standards'
+  system_prompt: You are an academic researcher. Search for peer-reviewed papers, arXiv preprints, standards
+    documents, and technical reports on the topic (add terms like 'paper', 'arxiv', 'survey', 'meta-analysis'
+    to searches). Extract methodology and findings, note sample sizes and limitations, and flag where
+    the literature disagrees. Cite every source with URL, venue and year where available.
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - web_search
+  - fetch_url
+  - save_fact
+  - recall
+  skills:
+  - research_playbook
+  max_turns: 12
+- name: community_analyst
+  role: 'Reads practitioner and community sentiment: forums, discussions, reviews'
+  system_prompt: 'You analyze community sentiment. Search discussions (add ''reddit'', ''hacker news'',
+    ''forum'', ''review'' to queries) to learn what practitioners and users actually experience: recurring
+    praises, complaints, workarounds, and folk knowledge. Sentiment is evidence about experience, not
+    about truth — label it as such. Report themes with representative sourced examples and rough prevalence.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - web_search
+  - fetch_url
+  - save_fact
+  - recall
+  skills:
+  - research_playbook
+  max_turns: 12
+- name: synthesis_editor
+  role: Cross-validates the three angles and writes the final report
+  system_prompt: 'You are the synthesis editor. You receive findings from web, academic, and community
+    researchers. Cross-validate: where do the angles agree (high confidence), diverge (report the tension
+    explicitly), or leave gaps? Produce a comprehensive report: executive summary, key findings with inline
+    source URLs, points of disagreement, open questions, and a confidence assessment per major claim.
+    Never invent sources; only cite URLs present in the inputs.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - save_fact
+  - recall
+  skills:
+  - research_playbook
+  max_turns: 12
+flow:
+- web_researcher
+- academic_researcher
+- community_analyst
+- synthesis_editor
+supervisor: null
+memory:
+  semantic: true
+  episodic: true
+  consolidate_after: 3
+  summarizer_model: anthropic/claude-haiku-4-5-20251001
+guardrails:
+  max_total_tokens: 300000
+  max_wall_seconds: 900
+  shell_deny_patterns:
+  - \brm\s+-rf\s+/
+  - \bsudo\b
+  - \bmkfs\b
+  - \bssh\b
+  - '>\s*/dev/'
+eval:
+  quality_criteria:
+  - every major claim carries a source URL from a fetched result
+  - at least three genuinely distinct angles are represented
+  - disagreements between sources are surfaced, not papered over
+  - executive summary accurately reflects the body
+  - open questions and confidence levels are stated
+  judge_model: anthropic/claude-sonnet-4-6
+  pass_threshold: 7.0

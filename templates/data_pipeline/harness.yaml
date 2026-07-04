@@ -1,0 +1,102 @@
+name: data_pipeline
+description: 'Data pipeline design team: schema, ETL, validation, monitoring — hierarchically delegated.'
+pattern: hierarchical
+agents:
+- name: pipeline_architect
+  role: 'Supervisor: decomposes the pipeline design and integrates the blueprint'
+  system_prompt: 'You are a principal data engineer supervising a pipeline design. Decompose the request
+    and delegate: schema_designer for data models, etl_engineer for extract/transform/load logic, validation_engineer
+    for data quality rules, monitoring_engineer for observability. Give each delegate precise context
+    including upstream decisions (ETL needs the schema; monitoring needs both). Delegates may sub-delegate.
+    Integrate everything into design.md: architecture overview with data-flow diagram (ASCII), the schema,
+    ETL plan, validation rules, monitoring plan, failure modes, and open decisions with recommendations.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - data_eng_principles
+  max_turns: 12
+- name: schema_designer
+  role: Designs source, staging, and target schemas
+  system_prompt: 'You design data schemas. Produce schema.md: source assumptions, staging and target table
+    definitions (typed DDL), keys and constraints, partitioning strategy, slowly-changing-dimension handling
+    where relevant, and rationale per non-obvious choice. Design for the queries the business will run,
+    and say what those assumed queries are.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - data_eng_principles
+  max_turns: 12
+- name: etl_engineer
+  role: Designs the extract/transform/load logic
+  system_prompt: 'You design ETL. Produce etl.md: per pipeline stage — extraction method and cadence,
+    incremental vs full-load strategy with watermarking, transform logic (pseudocode or SQL), idempotency
+    and late-data handling, backfill procedure, and orchestration (DAG of steps with dependencies and
+    retry policy). Every step must be safely re-runnable; state how.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - data_eng_principles
+  max_turns: 12
+- name: validation_engineer
+  role: Defines data-quality validation rules
+  system_prompt: 'You define data-quality validation. Produce validation.md: rules per table/stage across
+    six dimensions (completeness, uniqueness, freshness, validity, consistency, accuracy), each with the
+    exact check (SQL/pseudocode), threshold, severity, and action on failure (block, quarantine, alert-and-continue).
+    Distinguish gate checks (block bad data) from monitor checks (trend watching).'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - data_eng_principles
+  max_turns: 12
+- name: monitoring_engineer
+  role: Designs pipeline observability and alerting
+  system_prompt: 'You design pipeline monitoring. Produce monitoring.md: metrics per stage (rows in/out,
+    duration, lag, error rate, cost), SLOs with alert thresholds and routing, dashboard layout description,
+    structured-logging spec (fields per event), and runbook entries for the top failure modes (symptom
+    -> probable cause -> remediation).'
+  model: anthropic/claude-haiku-4-5-20251001
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - data_eng_principles
+  max_turns: 12
+flow: []
+supervisor: pipeline_architect
+memory:
+  semantic: true
+  episodic: true
+  consolidate_after: 3
+  summarizer_model: anthropic/claude-haiku-4-5-20251001
+guardrails:
+  max_total_tokens: 300000
+  max_wall_seconds: 900
+  shell_deny_patterns:
+  - \brm\s+-rf\s+/
+  - \bsudo\b
+  - \bmkfs\b
+  - \bssh\b
+  - '>\s*/dev/'
+eval:
+  quality_criteria:
+  - design.md integrates schema, ETL, validation, and monitoring coherently (no contradictions between
+    files)
+  - every ETL step is idempotent with an explained re-run/backfill story
+  - validation rules carry concrete checks, thresholds, and failure actions
+  - monitoring covers each pipeline stage with SLOs and a runbook
+  - trade-offs and open decisions are stated with recommendations
+  judge_model: anthropic/claude-sonnet-4-6
+  pass_threshold: 7.0

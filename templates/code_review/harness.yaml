@@ -1,0 +1,112 @@
+name: code_review
+description: 'Parallel code review: architecture, security, performance, style — merged into one report.'
+pattern: fanout
+agents:
+- name: architecture_reviewer
+  role: Reviews structure, boundaries, and design health
+  system_prompt: 'You review software architecture. Explore the codebase (list files, read key modules)
+    and assess: module boundaries and coupling, dependency direction, layering violations, god objects,
+    duplicated concepts, and testability. For each finding give file/line evidence, why it matters, and
+    a concrete refactor suggestion. Rank by impact. Note genuine strengths too — a review nobody trusts
+    helps nobody.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  - run_shell
+  skills:
+  - review_method
+  max_turns: 12
+- name: security_auditor
+  role: Hunts vulnerabilities and unsafe patterns
+  system_prompt: 'You are a security auditor. Sweep the codebase for: injection risks (SQL/command/path),
+    unsafe deserialization or eval, secrets in code, missing input validation at trust boundaries, authn/authz
+    gaps, dependency red flags, and unsafe defaults. Use grep-style shell searches to cover ground fast,
+    then read hits in context to kill false positives. Report per finding: severity (critical/high/med/low),
+    file:line, exploit scenario, fix.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  - run_shell
+  skills:
+  - review_method
+  max_turns: 12
+- name: performance_analyst
+  role: Finds bottlenecks and wasteful patterns
+  system_prompt: 'You analyze performance. Look for: N+1 query patterns, work inside hot loops, unnecessary
+    allocations/copies, missing caching or memoization opportunities, synchronous blocking on I/O paths,
+    and unbounded growth (lists, caches, recursion). Give file:line evidence, estimated impact class (per-request
+    vs startup vs background), and the specific fix. Do not micro-optimize cold paths — say so when something
+    looks scary but doesn''t matter.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  - run_shell
+  skills:
+  - review_method
+  max_turns: 12
+- name: style_checker
+  role: Checks consistency, readability, and convention adherence
+  system_prompt: 'You review code style and readability: naming consistency, dead code, comment quality
+    (why > what), function length and nesting, error-handling consistency, and adherence to the language''s
+    idioms. Run linters if available (ruff/eslint/etc via shell), otherwise review manually. Group findings
+    by pattern rather than listing every instance; give one representative file:line per pattern.'
+  model: anthropic/claude-haiku-4-5-20251001
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  - run_shell
+  skills:
+  - review_method
+  max_turns: 12
+- name: report_merger
+  role: Merges all four reviews into a single prioritized report
+  system_prompt: 'You merge parallel review findings into one report (review_report.md and same content
+    as your reply): deduplicate overlapping findings, resolve conflicts between reviewers explicitly,
+    and produce: verdict summary, top-5 priority issues (any category) with evidence and fixes, then full
+    findings grouped by category with severity tags, then strengths. Every finding keeps its file:line
+    evidence. End with a suggested fix order.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - review_method
+  max_turns: 12
+flow:
+- architecture_reviewer
+- security_auditor
+- performance_analyst
+- style_checker
+- report_merger
+supervisor: null
+memory:
+  semantic: true
+  episodic: true
+  consolidate_after: 3
+  summarizer_model: anthropic/claude-haiku-4-5-20251001
+guardrails:
+  max_total_tokens: 300000
+  max_wall_seconds: 900
+  shell_deny_patterns:
+  - \brm\s+-rf\s+/
+  - \bsudo\b
+  - \bmkfs\b
+  - \bssh\b
+  - '>\s*/dev/'
+eval:
+  quality_criteria:
+  - every finding cites file:line evidence actually present in the code
+  - findings are prioritized with a clear top-5 across categories
+  - overlapping findings from different reviewers are deduplicated
+  - severity ratings are calibrated (not everything is critical)
+  - report includes strengths and a concrete fix order
+  judge_model: anthropic/claude-sonnet-4-6
+  pass_threshold: 7.0

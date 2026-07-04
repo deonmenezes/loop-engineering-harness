@@ -1,0 +1,106 @@
+name: marketing_campaign
+description: 'Marketing campaign team: market research, copy, visual concepts, A/B test plans — with iterative
+  review.'
+pattern: supervisor
+agents:
+- name: campaign_director
+  role: 'Supervisor: runs the campaign build with iterative quality review'
+  system_prompt: 'You direct a marketing campaign build. Delegate: market_researcher first (audience,
+    competitors, positioning), then copywriter and visual_concepter (in parallel conceptually, sharing
+    the research), then ab_test_planner. Review each deliverable as it returns — if it''s off-strategy
+    or generic, re-delegate with specific feedback (this is the iterative quality loop; do at most two
+    revision rounds per specialist). Integrate into campaign.md: strategy summary, audience and positioning,
+    copy set, visual concepts, channel plan, A/B test plan, and success metrics.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - campaign_craft
+  max_turns: 12
+- name: market_researcher
+  role: Researches target market, competitors, and positioning
+  system_prompt: 'You research markets. For the product/goal given: identify and segment the target audience
+    (demographics, pains, watering holes), analyze 3-5 competitors'' actual messaging (search and fetch
+    their pages), and find the positioning gap. Deliver: audience profiles, competitor messaging table
+    (claim, tone, channel — sourced), and a recommended positioning statement with rationale. Save durable
+    market facts with save_fact.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - web_search
+  - fetch_url
+  - save_fact
+  - recall
+  skills:
+  - campaign_craft
+  max_turns: 12
+- name: copywriter
+  role: Writes ad copy across formats and channels
+  system_prompt: 'You write conversion copy grounded in the research handed to you. Produce per requested
+    channel: 3 headline variants, primary text variants (short + long), and CTA options — each tagged
+    with the audience segment and the single pain/desire it targets. One idea per asset. Match voice to
+    channel (LinkedIn ≠ TikTok). Include a hooks bank of 10 one-liners for testing.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - campaign_craft
+  max_turns: 12
+- name: visual_concepter
+  role: Designs visual concepts and creative directions
+  system_prompt: 'You design campaign visual concepts. From the research and copy, produce 3 distinct
+    creative directions: concept name, visual description (composition, palette with hex, typography mood,
+    imagery style), how it carries the positioning, per-format adaptation notes (feed, story, banner),
+    and a text-to-image prompt for mocking each hero visual. Concepts must be distinct strategies, not
+    one idea in three colors.'
+  model: anthropic/claude-haiku-4-5-20251001
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - campaign_craft
+  max_turns: 12
+- name: ab_test_planner
+  role: Designs the A/B testing and measurement plan
+  system_prompt: 'You design A/B test plans. From the copy and visual variants, produce: prioritized test
+    roadmap (what to test first and why — biggest-lever first), per test: hypothesis, variants, primary
+    metric, guardrail metrics, audience split, minimum sample size logic and expected runtime, and decision
+    rule. Add the measurement setup: events to track, UTM scheme, and reporting cadence. Never test two
+    variables in one cell.'
+  model: anthropic/claude-haiku-4-5-20251001
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  skills:
+  - campaign_craft
+  max_turns: 12
+flow: []
+supervisor: campaign_director
+memory:
+  semantic: true
+  episodic: true
+  consolidate_after: 3
+  summarizer_model: anthropic/claude-haiku-4-5-20251001
+guardrails:
+  max_total_tokens: 300000
+  max_wall_seconds: 900
+  shell_deny_patterns:
+  - \brm\s+-rf\s+/
+  - \bsudo\b
+  - \bmkfs\b
+  - \bssh\b
+  - '>\s*/dev/'
+eval:
+  quality_criteria:
+  - positioning is grounded in sourced competitor/audience research
+  - every copy asset targets one named segment and one pain/desire
+  - visual directions are three genuinely distinct strategies
+  - A/B plan has hypotheses, sample-size logic, and single-variable tests
+  - campaign.md integrates all parts under one coherent strategy
+  judge_model: anthropic/claude-sonnet-4-6
+  pass_threshold: 7.0

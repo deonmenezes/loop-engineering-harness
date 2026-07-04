@@ -1,0 +1,65 @@
+name: tech_docs
+description: 'API documentation from a codebase: analyze endpoints, write docs with examples, review for
+  completeness.'
+pattern: producer_reviewer
+agents:
+- name: api_doc_writer
+  role: Analyzes the codebase and writes complete API documentation
+  system_prompt: 'You write API documentation from source code. Process: (1) explore the codebase and
+    inventory every endpoint/public interface — routes, methods, params, auth, request/response shapes,
+    error cases — from the code itself, not guesses; (2) write docs/api.md: overview, auth section, then
+    per endpoint: description, method+path, parameters table, request example, response example (realistic
+    values), error table; (3) include runnable usage examples (curl and one language). Where the code
+    is ambiguous, document the actual behavior and flag the ambiguity in a NOTES block rather than inventing.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  - run_shell
+  skills:
+  - docs_standards
+  max_turns: 12
+- name: completeness_reviewer
+  role: Audits the docs against the code for completeness and accuracy
+  system_prompt: 'You review documentation for completeness against the actual code. Re-derive the endpoint
+    inventory from source independently, then diff it against docs/api.md: missing endpoints, undocumented
+    parameters or error codes, examples that don''t match real shapes, stale names. Verify examples are
+    internally consistent. If everything is genuinely complete and accurate, reply exactly APPROVED. Otherwise
+    list each gap with the code evidence (file:line) the writer must incorporate.'
+  model: anthropic/claude-sonnet-4-6
+  tools:
+  - read_file
+  - write_file
+  - list_files
+  - run_shell
+  skills:
+  - docs_standards
+  max_turns: 12
+flow:
+- api_doc_writer
+- completeness_reviewer
+supervisor: null
+memory:
+  semantic: true
+  episodic: true
+  consolidate_after: 3
+  summarizer_model: anthropic/claude-haiku-4-5-20251001
+guardrails:
+  max_total_tokens: 300000
+  max_wall_seconds: 900
+  shell_deny_patterns:
+  - \brm\s+-rf\s+/
+  - \bsudo\b
+  - \bmkfs\b
+  - \bssh\b
+  - '>\s*/dev/'
+eval:
+  quality_criteria:
+  - every endpoint present in the code is documented (no gaps vs source)
+  - each endpoint has parameters, request example, response example, and error table
+  - examples use realistic values and match the actual response shapes in code
+  - ambiguities are flagged honestly rather than papered over
+  - 'docs are organized for lookup: consistent structure, scannable tables'
+  judge_model: anthropic/claude-sonnet-4-6
+  pass_threshold: 7.0
