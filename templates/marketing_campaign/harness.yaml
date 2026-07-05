@@ -18,6 +18,8 @@ agents:
   - list_files
   skills:
   - campaign_craft
+  output_format: Deliver in labeled markdown sections. Every copy variant tagged [segment | pain | channel].
+    Tables for A/B test matrices. End with a one-paragraph strategic rationale.
   max_turns: 12
 - name: market_researcher
   role: Researches target market, competitors, and positioning
@@ -34,6 +36,8 @@ agents:
   - recall
   skills:
   - campaign_craft
+  output_format: Deliver in labeled markdown sections. Every copy variant tagged [segment | pain | channel].
+    Tables for A/B test matrices. End with a one-paragraph strategic rationale.
   max_turns: 12
 - name: copywriter
   role: Writes ad copy across formats and channels
@@ -48,6 +52,8 @@ agents:
   - list_files
   skills:
   - campaign_craft
+  output_format: Deliver in labeled markdown sections. Every copy variant tagged [segment | pain | channel].
+    Tables for A/B test matrices. End with a one-paragraph strategic rationale.
   max_turns: 12
 - name: visual_concepter
   role: Designs visual concepts and creative directions
@@ -63,6 +69,8 @@ agents:
   - list_files
   skills:
   - campaign_craft
+  output_format: Deliver in labeled markdown sections. Every copy variant tagged [segment | pain | channel].
+    Tables for A/B test matrices. End with a one-paragraph strategic rationale.
   max_turns: 12
 - name: ab_test_planner
   role: Designs the A/B testing and measurement plan
@@ -78,6 +86,8 @@ agents:
   - list_files
   skills:
   - campaign_craft
+  output_format: Deliver in labeled markdown sections. Every copy variant tagged [segment | pain | channel].
+    Tables for A/B test matrices. End with a one-paragraph strategic rationale.
   max_turns: 12
 flow: []
 supervisor: campaign_director
@@ -104,3 +114,10 @@ eval:
   - campaign.md integrates all parts under one coherent strategy
   judge_model: anthropic/claude-sonnet-4-6
   pass_threshold: 7.0
+loop:
+  planner_model: anthropic/claude-sonnet-4-6
+  max_cycles: 12
+  max_attempts_per_step: 2
+  replan_on_failure: true
+  step_verify: judge
+mcp_servers: []

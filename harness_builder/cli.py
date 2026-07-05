@@ -112,6 +112,14 @@ def cmd_rag(args):
         print(f"{len(store)} chunks at {store.path}")
 
 
+def cmd_lint(args):
+    from .core.anatomy import lint_report
+    from .core.spec import HarnessSpec
+    spec = HarnessSpec.load(args.harness)
+    hdir = Path(args.harness) if Path(args.harness).is_dir() else Path(args.harness).parent
+    print(lint_report(spec, hdir))
+
+
 def cmd_serve_mcp(_args):
     from .mcp.server import serve
     serve()
@@ -209,6 +217,11 @@ def main():
                         "server over stdio (claude mcp add loop-engineer -- "
                         "harness serve-mcp)")
     mc.set_defaults(fn=cmd_serve_mcp)
+
+    ln = sub.add_parser("lint", help="check every agent prompt against the "
+                        "5-section system-prompt anatomy and token budgets")
+    ln.add_argument("harness")
+    ln.set_defaults(fn=cmd_lint)
 
     t = sub.add_parser("templates", help="list bundled domain templates")
     t.set_defaults(fn=cmd_templates)

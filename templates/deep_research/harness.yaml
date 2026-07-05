@@ -17,6 +17,8 @@ agents:
   - recall
   skills:
   - research_playbook
+  output_format: 'Findings as markdown: ''## Key findings'' (bulleted, each ending with its source URL),
+    ''## Open questions'', ''## Confidence notes''. No preamble.'
   max_turns: 12
 - name: academic_researcher
   role: 'Finds scholarly and technical sources: papers, preprints, standards'
@@ -32,6 +34,8 @@ agents:
   - recall
   skills:
   - research_playbook
+  output_format: 'Findings as markdown: ''## Key findings'' (bulleted, each ending with its source URL),
+    ''## Open questions'', ''## Confidence notes''. No preamble.'
   max_turns: 12
 - name: community_analyst
   role: 'Reads practitioner and community sentiment: forums, discussions, reviews'
@@ -47,6 +51,8 @@ agents:
   - recall
   skills:
   - research_playbook
+  output_format: 'Findings as markdown: ''## Key findings'' (bulleted, each ending with its source URL),
+    ''## Open questions'', ''## Confidence notes''. No preamble.'
   max_turns: 12
 - name: synthesis_editor
   role: Cross-validates the three angles and writes the final report
@@ -61,6 +67,8 @@ agents:
   - recall
   skills:
   - research_playbook
+  output_format: 'Findings as markdown: ''## Key findings'' (bulleted, each ending with its source URL),
+    ''## Open questions'', ''## Confidence notes''. No preamble.'
   max_turns: 12
 flow:
 - web_researcher
@@ -91,3 +99,10 @@ eval:
   - open questions and confidence levels are stated
   judge_model: anthropic/claude-sonnet-4-6
   pass_threshold: 7.0
+loop:
+  planner_model: anthropic/claude-sonnet-4-6
+  max_cycles: 12
+  max_attempts_per_step: 2
+  replan_on_failure: true
+  step_verify: judge
+mcp_servers: []

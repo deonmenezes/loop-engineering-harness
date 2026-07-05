@@ -126,6 +126,23 @@ Force a whole harness onto one model: `--model-override groq/llama-3.3-70b-versa
 | Context management | working-memory assembly per run + in-loop pruning (oldest tool results collapsed, newest 4 kept, agent notes never touched) |
 | Any LLM | anthropic / openai / groq / openrouter / ollama, mixable per agent |
 
+## Anatomy of every agent's system prompt
+
+Every agent's working memory is assembled in the 5-section anatomy, in order
+(position matters), fresh per run (freshness matters):
+
+| § | Section | Source | Budget |
+|---|---|---|---|
+| 1 | Identity & Role | architect-written `system_prompt` (supports `{{working_directory}}`, `{{date}}`, `{{operating_system}}`, `{{shell}}` template vars) | ~300 tok |
+| 2 | Environment | **harness-injected** runtime values — never hand-written | ~200 tok |
+| 3 | Behavioral Rules | `skills/*.md` — the LARGEST section | ~1500 tok |
+| 4 | Output Format | per-agent `output_format` field | ~400 tok |
+| 5 | Safety & Security | **generated from the actual guardrail config** — prompt and code cannot drift; hard NEVER constraints | ~500 tok |
+
+Then memory blocks (semantic top-k, episodic recency, RAG top-k) — finite,
+just-in-time, quality over quantity. `harness lint <h>` checks every agent
+against the anatomy and token budgets, and reports the per-call context cost.
+
 ## Interactive TUI (opencode-style)
 
 Bare `harness` drops you into an interactive shell — chat-first, like opencode:

@@ -14,6 +14,8 @@ agents:
   tools: []
   skills:
   - youtube_playbook
+  output_format: Deliver your piece in clearly headed markdown sections. Scripts include timestamps and
+    [PRODUCTION CUES] in brackets. Lists over prose for options; label every variant.
   max_turns: 12
 - name: trend_researcher
   role: Validates topics and finds the angle with momentum
@@ -29,6 +31,8 @@ agents:
   - recall
   skills:
   - youtube_playbook
+  output_format: Deliver your piece in clearly headed markdown sections. Scripts include timestamps and
+    [PRODUCTION CUES] in brackets. Lists over prose for options; label every variant.
   max_turns: 12
 - name: script_writer
   role: Writes retention-optimized video scripts
@@ -44,6 +48,8 @@ agents:
   - list_files
   skills:
   - youtube_playbook
+  output_format: Deliver your piece in clearly headed markdown sections. Scripts include timestamps and
+    [PRODUCTION CUES] in brackets. Lists over prose for options; label every variant.
   max_turns: 12
 - name: seo_optimizer
   role: Optimizes title, tags, and description for search and CTR
@@ -57,6 +63,8 @@ agents:
   - recall
   skills:
   - youtube_playbook
+  output_format: Deliver your piece in clearly headed markdown sections. Scripts include timestamps and
+    [PRODUCTION CUES] in brackets. Lists over prose for options; label every variant.
   max_turns: 12
 - name: thumbnail_planner
   role: Designs high-CTR thumbnail concepts
@@ -68,6 +76,8 @@ agents:
   tools: []
   skills:
   - youtube_playbook
+  output_format: Deliver your piece in clearly headed markdown sections. Scripts include timestamps and
+    [PRODUCTION CUES] in brackets. Lists over prose for options; label every variant.
   max_turns: 12
 flow: []
 supervisor: content_director
@@ -94,3 +104,10 @@ eval:
   - final package is integrated and publish-ready, not four disconnected parts
   judge_model: anthropic/claude-sonnet-4-6
   pass_threshold: 7.0
+loop:
+  planner_model: anthropic/claude-sonnet-4-6
+  max_cycles: 12
+  max_attempts_per_step: 2
+  replan_on_failure: true
+  step_verify: judge
+mcp_servers: []

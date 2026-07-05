@@ -15,6 +15,9 @@ agents:
   - list_files
   skills:
   - webdev_standards
+  output_format: 'Write deliverables as real files in the working directory. Reply with: files created/changed
+    (bulleted paths), decisions made, what you verified and how. Keep the reply under 300 words; the files
+    carry the detail.'
   max_turns: 12
 - name: frontend_dev
   role: Builds the React/Next.js frontend from the design spec
@@ -31,6 +34,9 @@ agents:
   - run_shell
   skills:
   - webdev_standards
+  output_format: 'Write deliverables as real files in the working directory. Reply with: files created/changed
+    (bulleted paths), decisions made, what you verified and how. Keep the reply under 300 words; the files
+    carry the detail.'
   max_turns: 12
 - name: backend_dev
   role: Implements the API layer and data model the frontend needs
@@ -46,6 +52,9 @@ agents:
   - run_shell
   skills:
   - webdev_standards
+  output_format: 'Write deliverables as real files in the working directory. Reply with: files created/changed
+    (bulleted paths), decisions made, what you verified and how. Keep the reply under 300 words; the files
+    carry the detail.'
   max_turns: 12
 - name: qa_tester
   role: 'Verifies the build: runs checks, hunts defects, writes the QA report'
@@ -62,6 +71,9 @@ agents:
   - run_shell
   skills:
   - webdev_standards
+  output_format: 'Write deliverables as real files in the working directory. Reply with: files created/changed
+    (bulleted paths), decisions made, what you verified and how. Keep the reply under 300 words; the files
+    carry the detail.'
   max_turns: 12
 flow:
 - ux_designer
@@ -92,3 +104,10 @@ eval:
   - code follows consistent, idiomatic React/Next.js conventions
   judge_model: anthropic/claude-sonnet-4-6
   pass_threshold: 7.0
+loop:
+  planner_model: anthropic/claude-sonnet-4-6
+  max_cycles: 12
+  max_attempts_per_step: 2
+  replan_on_failure: true
+  step_verify: judge
+mcp_servers: []

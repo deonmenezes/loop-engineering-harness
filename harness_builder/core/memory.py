@@ -173,12 +173,31 @@ def maybe_consolidate(harness_dir: Path, memory_spec, trace=None):
 # Working memory / Context RAM — assembled fresh per agent run (ephemeral).
 # System prompt + skills (procedural) + RAG top-k (semantic) + recency (episodic).
 # ---------------------------------------------------------------------------
-def assemble_context(harness_dir: Path, agent_spec, task: str, memory_spec) -> str:
-    blocks = [agent_spec.system_prompt.strip()]
+def assemble_context(harness_dir: Path, agent_spec, task: str, memory_spec,
+                     *, workspace=None, harness_name: str = "",
+                     pattern: str = "", guardrails=None) -> str:
+    """Working memory assembled in the 5-section system-prompt anatomy:
+    §1 identity (architect-written) · §2 environment (runtime-injected) ·
+    §3 behavioral rules (skills) · §4 output format · §5 safety (generated
+    from guardrails) · then memory/RAG blocks (finite, top-k, fresh)."""
+    from .anatomy import (environment_block, render_template, runtime_vars,
+                          safety_block)
+    vars = runtime_vars(workspace=workspace or Path("workspace"),
+                        agent_name=agent_spec.name, model=agent_spec.model,
+                        harness_name=harness_name, pattern=pattern)
 
-    skills = load_skills(harness_dir, agent_spec.skills)
+    blocks = ["## §1 IDENTITY & ROLE\n"
+              + render_template(agent_spec.system_prompt.strip(), vars)]
+    blocks.append(environment_block(vars))
+
+    skills = render_template(load_skills(harness_dir, agent_spec.skills), vars)
     if skills:
-        blocks.append(f"# PROCEDURAL MEMORY (how to act)\n{skills}")
+        blocks.append(f"## §3 BEHAVIORAL RULES (your craft — follow precisely)\n{skills}")
+    if agent_spec.output_format:
+        blocks.append("## §4 OUTPUT FORMAT\n"
+                      + render_template(agent_spec.output_format.strip(), vars))
+    if guardrails is not None:
+        blocks.append(safety_block(guardrails, agent_spec.tools))
 
     if memory_spec.semantic:
         facts = SemanticMemory(harness_dir).search(task, k=5)

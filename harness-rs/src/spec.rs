@@ -36,6 +36,8 @@ pub struct AgentSpec {
     pub tools: Vec<String>,
     #[serde(default)]
     pub skills: Vec<String>,
+    #[serde(default)]
+    pub output_format: String,
     #[serde(default = "d_max_turns")]
     pub max_turns: u32,
 }

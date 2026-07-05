@@ -49,9 +49,16 @@ one-off tasks -> expert_pool.
 3-6 agents. Each needs:
 - name: snake_case
 - role: one line
-- system_prompt: 150-400 words. Written like you'd brief a skilled specialist: \
-identity, objective, method/process, output format, quality bar, boundaries. \
-Domain-specific and concrete — never generic filler.
+- system_prompt: ONLY anatomy §1 IDENTITY & ROLE (~300 tokens): who the agent \
+is, its objective, its method at a high level, its quality bar. Domain-specific, \
+never generic. Do NOT include environment, safety rules, or output formatting \
+here — the harness auto-injects §2 ENVIRONMENT (runtime values) and §5 SAFETY \
+(hard constraints); formatting goes in output_format. You may use template \
+variables {{{{working_directory}}}}, {{{{date}}}}, {{{{operating_system}}}}, \
+{{{{shell}}}} — rendered at runtime.
+- output_format: anatomy §4 (~100-400 tokens): exactly how this agent must \
+structure its responses/deliverables (sections, file names, length rules, \
+markdown conventions).
 - model: default "{default_model}". Use "{cheap_model}" for mechanical/low-\
 judgment agents (formatting, extraction, routing).
 - tools: subset of {tool_names}. Least privilege: only what the role needs. \
@@ -60,7 +67,9 @@ run_shell; pure-reasoning roles need few or none. save_fact/recall for roles \
 that benefit from cross-run memory. Give search_docs to any role that should \
 consult the harness's ingested reference corpus (RAG). Agents may also list \
 "mcp:<server>" to use an external MCP server's tools if the user mentions one.
-- skills: [name] of ONE skill file you will also write (procedural memory).
+- skills: [name] of ONE skill file you will also write. Skills are anatomy \
+§3 BEHAVIORAL RULES — the LARGEST section (~800-1500 tokens): concrete \
+procedures, checklists, domain heuristics, common pitfalls.
 
 # Quality criteria
 4-6 crisp, checkable criteria an LLM judge will score the final output \
@@ -75,7 +84,7 @@ against. Domain-specific ("all claims cite a fetched source URL"), not vague \
  "supervisor": null,
  "flow": [],
  "agents": [{{"name": "...", "role": "...", "system_prompt": "...",
-             "model": "...", "tools": [], "skills": ["..."]}}],
+             "output_format": "...", "model": "...", "tools": [], "skills": ["..."]}}],
  "quality_criteria": ["..."],
  "skills": {{"skill_name": "markdown body: concrete procedures, checklists, \
 domain heuristics, common pitfalls for that agent. 200-500 words."}}

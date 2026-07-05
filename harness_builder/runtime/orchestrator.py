@@ -49,9 +49,16 @@ class Orchestrator:
                                    semantic_memory=self.semantic, trace=self.trace,
                                    rag=self.rag, mcp_pool=self.mcp_pool)
 
+    def _assemble(self, agent, task: str) -> str:
+        return assemble_context(self.harness_dir, agent, task, self.spec.memory,
+                                workspace=self.workspace,
+                                harness_name=self.spec.name,
+                                pattern=self.spec.pattern,
+                                guardrails=self.spec.guardrails)
+
     def _run_one(self, agent_name: str, task: str) -> str:
         agent = self.spec.agent(agent_name)
-        system = assemble_context(self.harness_dir, agent, task, self.spec.memory)
+        system = self._assemble(agent, task)
         print(f"  ▶ {agent_name} [{agent.model}]")
         res = run_agent(agent_spec=agent, system=system, task=task,
                         ctx=self._ctx(), guardrails=self.spec.guardrails,
@@ -182,7 +189,7 @@ class Orchestrator:
         try:
             if "delegate" not in agent.tools:
                 agent.tools = agent.tools + ["delegate"]
-            system = assemble_context(self.harness_dir, agent, task, self.spec.memory)
+            system = self._assemble(agent, task)
             system += ("\n\nYou are the coordinator. Break the task down, use "
                        "`delegate` for specialist work, then integrate results "
                        "into the final deliverable yourself.")

@@ -19,6 +19,8 @@ agents:
   - run_shell
   skills:
   - docs_standards
+  output_format: 'Docs to docs/api.md with a consistent per-endpoint skeleton: description, method+path,
+    parameters table, request example, response example, error table. Reply summarizes coverage counts.'
   max_turns: 12
 - name: completeness_reviewer
   role: Audits the docs against the code for completeness and accuracy
@@ -35,6 +37,8 @@ agents:
   - run_shell
   skills:
   - docs_standards
+  output_format: 'Docs to docs/api.md with a consistent per-endpoint skeleton: description, method+path,
+    parameters table, request example, response example, error table. Reply summarizes coverage counts.'
   max_turns: 12
 flow:
 - api_doc_writer
@@ -63,3 +67,10 @@ eval:
   - 'docs are organized for lookup: consistent structure, scannable tables'
   judge_model: anthropic/claude-sonnet-4-6
   pass_threshold: 7.0
+loop:
+  planner_model: anthropic/claude-sonnet-4-6
+  max_cycles: 12
+  max_attempts_per_step: 2
+  replan_on_failure: true
+  step_verify: judge
+mcp_servers: []

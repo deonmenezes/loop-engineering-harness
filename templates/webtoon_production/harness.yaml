@@ -17,6 +17,8 @@ agents:
   - list_files
   skills:
   - webtoon_craft
+  output_format: Write your stage's .md file to the working directory using the structure your skill defines.
+    Reply with the filename and a 3-line summary of creative choices.
   max_turns: 12
 - name: character_designer
   role: Writes precise character design prompts for the artist/image model
@@ -32,6 +34,8 @@ agents:
   - list_files
   skills:
   - webtoon_craft
+  output_format: Write your stage's .md file to the working directory using the structure your skill defines.
+    Reply with the filename and a 3-line summary of creative choices.
   max_turns: 12
 - name: panel_planner
   role: Plans the vertical-scroll panel layout
@@ -47,6 +51,8 @@ agents:
   - list_files
   skills:
   - webtoon_craft
+  output_format: Write your stage's .md file to the working directory using the structure your skill defines.
+    Reply with the filename and a 3-line summary of creative choices.
   max_turns: 12
 - name: dialogue_editor
   role: Writes and polishes all dialogue, captions and SFX
@@ -61,6 +67,8 @@ agents:
   - list_files
   skills:
   - webtoon_craft
+  output_format: Write your stage's .md file to the working directory using the structure your skill defines.
+    Reply with the filename and a 3-line summary of creative choices.
   max_turns: 12
 - name: style_reviewer
   role: Reviews all artifacts against each other for consistency
@@ -76,6 +84,8 @@ agents:
   - list_files
   skills:
   - webtoon_craft
+  output_format: Write your stage's .md file to the working directory using the structure your skill defines.
+    Reply with the filename and a 3-line summary of creative choices.
   max_turns: 12
 flow:
 - story_writer
@@ -107,3 +117,10 @@ eval:
   - review.md documents a real consistency audit, not a rubber stamp
   judge_model: anthropic/claude-sonnet-4-6
   pass_threshold: 7.0
+loop:
+  planner_model: anthropic/claude-sonnet-4-6
+  max_cycles: 12
+  max_attempts_per_step: 2
+  replan_on_failure: true
+  step_verify: judge
+mcp_servers: []

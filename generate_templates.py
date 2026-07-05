@@ -14,8 +14,21 @@ CODE = ["read_file", "write_file", "list_files", "run_shell"]
 WRITE = ["read_file", "write_file", "list_files"]
 
 
-def A(name, role, prompt, model=S, tools=(), skills=()):
+OF = {  # anatomy §4 per harness (applied to every agent unless overridden)
+ "deep_research": "Findings as markdown: '## Key findings' (bulleted, each ending with its source URL), '## Open questions', '## Confidence notes'. No preamble.",
+ "website_dev": "Write deliverables as real files in the working directory. Reply with: files created/changed (bulleted paths), decisions made, what you verified and how. Keep the reply under 300 words; the files carry the detail.",
+ "webtoon_production": "Write your stage's .md file to the working directory using the structure your skill defines. Reply with the filename and a 3-line summary of creative choices.",
+ "youtube_content": "Deliver your piece in clearly headed markdown sections. Scripts include timestamps and [PRODUCTION CUES] in brackets. Lists over prose for options; label every variant.",
+ "code_review": "Findings as: '## <Category> findings' with one bullet per finding — severity tag, file:line, issue, fix. End with '## Strengths'. No finding without file:line evidence.",
+ "tech_docs": "Docs to docs/api.md with a consistent per-endpoint skeleton: description, method+path, parameters table, request example, response example, error table. Reply summarizes coverage counts.",
+ "data_pipeline": "Write your design section to its own .md file in the working directory (schema.md/etl.md/validation.md/monitoring.md/design.md). Use typed DDL/SQL blocks for anything executable. Reply with filename + 5-line summary.",
+ "marketing_campaign": "Deliver in labeled markdown sections. Every copy variant tagged [segment | pain | channel]. Tables for A/B test matrices. End with a one-paragraph strategic rationale.",
+}
+_current = {"h": None}
+
+def A(name, role, prompt, model=S, tools=(), skills=(), output_format=None):
     return {"name": name, "role": role, "system_prompt": prompt,
+            "output_format": output_format or OF.get(_current["h"], ""),
             "model": model, "tools": list(tools), "skills": list(skills)}
 
 
@@ -296,6 +309,10 @@ T["marketing_campaign"] = dict(
 # ── generate ────────────────────────────────────────────────────────────
 out_root = Path(__file__).parent / "templates"
 for key, t in T.items():
+    _current["h"] = key  # late-bind output_format... but A() already ran; patch agents now
+    for a in t["agents"]:
+        if not a.get("output_format"):
+            a["output_format"] = OF[key]
     skills = t.pop("skills")
     criteria = t.pop("criteria")
     t["eval"] = {"quality_criteria": criteria}
@@ -305,6 +322,6 @@ for key, t in T.items():
     for name, body in skills.items():
         (d / "skills" / f"{name}.md").write_text(body)
     # templates ship without memory dirs; created on `harness use`
-    (d / "memory").rmdir()
+    import shutil; shutil.rmtree(d / "memory", ignore_errors=True)
     print(f"OK  {key:<22} pattern={spec.pattern:<18} agents={len(spec.agents)}")
 print("\nall templates generated + validated")

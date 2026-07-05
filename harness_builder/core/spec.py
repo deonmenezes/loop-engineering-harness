@@ -32,6 +32,7 @@ class AgentSpec:
     model: str = "anthropic/claude-sonnet-4-6"   # provider/model routing string
     tools: list[str] = field(default_factory=list)  # names from the tool registry
     skills: list[str] = field(default_factory=list) # skill files loaded into context
+    output_format: str = ""   # anatomy §4: how to structure responses (~400 tok)
     max_turns: int = 12
 
 

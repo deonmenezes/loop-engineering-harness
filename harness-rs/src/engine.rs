@@ -156,7 +156,8 @@ impl<'a> Orchestrator<'a> {
         use std::sync::atomic::Ordering;
         let agent = self.spec.agent(name)?;
         let system = assemble_context(&self.harness_dir, agent, task,
-                                      &self.spec.memory);
+            &self.spec.memory, &self.workspace, &self.spec.name,
+            &self.spec.pattern, &self.spec.guardrails);
         println!("  ▶ {} [{}]", name, agent.model);
         let ctx = ToolCtx::new(self.workspace.clone(), &self.spec.guardrails,
                                self.semantic.as_ref(), self.harness_dir.clone());
@@ -307,7 +308,8 @@ impl<'a> Orchestrator<'a> {
 
         let agent = self.spec.agent(name)?;
         let mut system = assemble_context(&self.harness_dir, agent, task,
-                                          &self.spec.memory);
+            &self.spec.memory, &self.workspace, &self.spec.name,
+            &self.spec.pattern, &self.spec.guardrails);
         let roster2: String = team.iter()
             .map(|a| format!("- {}: {}", a.name, a.role))
             .collect::<Vec<_>>().join("\n");

@@ -17,6 +17,8 @@ agents:
   - run_shell
   skills:
   - review_method
+  output_format: 'Findings as: ''## <Category> findings'' with one bullet per finding — severity tag,
+    file:line, issue, fix. End with ''## Strengths''. No finding without file:line evidence.'
   max_turns: 12
 - name: security_auditor
   role: Hunts vulnerabilities and unsafe patterns
@@ -33,6 +35,8 @@ agents:
   - run_shell
   skills:
   - review_method
+  output_format: 'Findings as: ''## <Category> findings'' with one bullet per finding — severity tag,
+    file:line, issue, fix. End with ''## Strengths''. No finding without file:line evidence.'
   max_turns: 12
 - name: performance_analyst
   role: Finds bottlenecks and wasteful patterns
@@ -49,6 +53,8 @@ agents:
   - run_shell
   skills:
   - review_method
+  output_format: 'Findings as: ''## <Category> findings'' with one bullet per finding — severity tag,
+    file:line, issue, fix. End with ''## Strengths''. No finding without file:line evidence.'
   max_turns: 12
 - name: style_checker
   role: Checks consistency, readability, and convention adherence
@@ -64,6 +70,8 @@ agents:
   - run_shell
   skills:
   - review_method
+  output_format: 'Findings as: ''## <Category> findings'' with one bullet per finding — severity tag,
+    file:line, issue, fix. End with ''## Strengths''. No finding without file:line evidence.'
   max_turns: 12
 - name: report_merger
   role: Merges all four reviews into a single prioritized report
@@ -79,6 +87,8 @@ agents:
   - list_files
   skills:
   - review_method
+  output_format: 'Findings as: ''## <Category> findings'' with one bullet per finding — severity tag,
+    file:line, issue, fix. End with ''## Strengths''. No finding without file:line evidence.'
   max_turns: 12
 flow:
 - architecture_reviewer
@@ -110,3 +120,10 @@ eval:
   - report includes strengths and a concrete fix order
   judge_model: anthropic/claude-sonnet-4-6
   pass_threshold: 7.0
+loop:
+  planner_model: anthropic/claude-sonnet-4-6
+  max_cycles: 12
+  max_attempts_per_step: 2
+  replan_on_failure: true
+  step_verify: judge
+mcp_servers: []
