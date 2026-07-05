@@ -29,7 +29,11 @@ class RunResult:
 def run_agent(*, agent_spec, system: str, task: str, ctx: toolreg.ToolContext,
               guardrails, trace=None, token_budget_used: int = 0) -> RunResult:
     provider, model = api.resolve(agent_spec.model)
-    tool_schemas = toolreg.schemas_for(agent_spec.tools) if agent_spec.tools else None
+    builtin = [t for t in agent_spec.tools if not t.startswith("mcp:")]
+    tool_schemas = toolreg.schemas_for(builtin) if builtin else []
+    if ctx.mcp_pool is not None:
+        tool_schemas += ctx.mcp_pool.tools_for(agent_spec.tools)
+    tool_schemas = tool_schemas or None
     messages = [{"role": "user", "content": task}]
     result = RunResult(reply="", turns=0)
     started = time.monotonic()
@@ -44,6 +48,8 @@ def run_agent(*, agent_spec, system: str, task: str, ctx: toolreg.ToolContext,
             result.stopped_by = "wall_clock"
             break
 
+        # context management: old tool outputs are stale ballast — prune them
+        messages = provider.prune_tool_results(messages, keep_last=4)
         resp = provider.chat(model=model, system=system, messages=messages,
                              tools=tool_schemas)
         result.turns = turn + 1

@@ -17,11 +17,14 @@ from pathlib import Path
 class ToolContext:
     """Injected runtime state: workspace, guardrails, memory handles, trace."""
 
-    def __init__(self, workspace: Path, guardrails, semantic_memory=None, trace=None):
+    def __init__(self, workspace: Path, guardrails, semantic_memory=None,
+                 trace=None, rag=None, mcp_pool=None):
         self.workspace = workspace
         self.guardrails = guardrails
         self.semantic_memory = semantic_memory
         self.trace = trace
+        self.rag = rag
+        self.mcp_pool = mcp_pool
         workspace.mkdir(parents=True, exist_ok=True)
 
     def safe_path(self, rel: str) -> Path:
@@ -55,6 +58,9 @@ def schemas_for(names: list[str]) -> list[dict]:
 
 def execute(ctx: ToolContext, name: str, tool_input: dict) -> tuple[str, bool]:
     """Errors are feedback, not crashes: (result_text, is_error)."""
+    if ctx.mcp_pool is not None and ctx.mcp_pool.owns(name):
+        out, is_err = ctx.mcp_pool.call(name, tool_input)
+        return out[:12000], is_err
     if name not in REGISTRY:
         return f"unknown tool '{name}'", True
     try:
@@ -161,3 +167,15 @@ def recall(ctx, query: str):
         return "semantic memory disabled for this harness"
     facts = ctx.semantic_memory.search(query, k=5)
     return "\n".join(f"- {f}" for f in facts) or "(nothing relevant stored)"
+
+
+@tool("search_docs", "Search the harness's ingested document corpus (RAG). "
+                     "Use for domain reference material added via `harness rag`.",
+      {"type": "object", "properties": {"query": {"type": "string"}},
+       "required": ["query"]})
+def search_docs(ctx, query: str):
+    if ctx.rag is None or len(ctx.rag) == 0:
+        return "no documents ingested for this harness (harness rag <dir> add <path|url>)"
+    hits = ctx.rag.search(query, k=4)
+    return "\n\n".join(f"[source: {h['source']}]\n{h['text']}" for h in hits) \
+        or "(nothing relevant in the corpus)"

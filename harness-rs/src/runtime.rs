@@ -93,11 +93,16 @@ impl SemanticMemory {
     }
 
     pub fn add(&self, fact: &str, source: &str) {
+        let ts = Utc::now().to_rfc3339();
         let mut items = self.items.lock().unwrap();
-        items.push(json!({"fact": fact, "source": source,
-                          "ts": Utc::now().to_rfc3339(), "emb": null}));
+        items.push(json!({"fact": fact, "source": source, "ts": ts, "emb": null}));
         let _ = fs::create_dir_all(self.path.parent().unwrap());
         let _ = fs::write(&self.path, serde_json::to_string_pretty(&*items).unwrap());
+        // human-readable md mirror
+        let md = self.path.parent().unwrap().join("MEMORY.md");
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(md) {
+            let _ = writeln!(f, "- {}  <!-- {} {} -->", fact, source, &ts[..10]);
+        }
     }
 
     /// token-overlap top-k (embedding-free; compatible with the shared JSON file)
@@ -108,11 +113,10 @@ impl SemanticMemory {
             let fact = it["fact"].as_str()?;
             let t = tokens(fact);
             let inter = q.intersection(&t).count() as f64;
-            let union = q.union(&t).count() as f64;
-            Some((inter / (union + 1e-9), fact.to_string()))
+            Some((inter / (q.len() as f64 + 1e-9), fact.to_string()))
         }).collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
-        scored.into_iter().take(k).filter(|(s, _)| *s > 0.05)
+        scored.into_iter().take(k).filter(|(s, _)| *s > 0.2)
               .map(|(_, f)| f).collect()
     }
 }
@@ -209,6 +213,29 @@ pub fn assemble_context(harness_dir: &Path, agent: &AgentSpec,
                 facts.iter().map(|f| format!("- {}", f)).collect::<Vec<_>>().join("\n")));
         }
     }
+    {
+        let path = harness_dir.join("memory/rag.json");
+        if let Some(items) = fs::read_to_string(&path).ok()
+            .and_then(|t| serde_json::from_str::<Vec<serde_json::Value>>(&t).ok()) {
+            let q_tok = tokens(task);
+            let mut scored: Vec<(f64, String)> = items.iter().filter_map(|it| {
+                let text = it["text"].as_str()?;
+                let t = tokens(text);
+                let inter = q_tok.intersection(&t).count() as f64;
+                Some((inter / (q_tok.len() as f64 + 1e-9),
+                      format!("[{}]\n{}", it["source"].as_str().unwrap_or(""),
+                              text.chars().take(800).collect::<String>())))
+            }).collect();
+            scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+            let hits: Vec<String> = scored.into_iter().take(3)
+                .filter(|(s, _)| *s > 0.25).map(|(_, t)| t).collect();
+            if !hits.is_empty() {
+                blocks.push(format!(
+                    "# REFERENCE DOCUMENTS (RAG top-k for this task)\n{}",
+                    hits.join("\n\n")));
+            }
+        }
+    }
     if mem.episodic {
         let recent = EpisodicMemory::open(harness_dir).recent(3);
         if !recent.is_empty() {
@@ -226,13 +253,14 @@ pub struct ToolCtx<'a> {
     pub workspace: PathBuf,
     pub guardrails: &'a GuardrailSpec,
     pub semantic: Option<&'a SemanticMemory>,
+    pub harness_dir: PathBuf,
 }
 
 impl<'a> ToolCtx<'a> {
     pub fn new(workspace: PathBuf, guardrails: &'a GuardrailSpec,
-               semantic: Option<&'a SemanticMemory>) -> Self {
+               semantic: Option<&'a SemanticMemory>, harness_dir: PathBuf) -> Self {
         let _ = fs::create_dir_all(&workspace);
-        Self { workspace, guardrails, semantic }
+        Self { workspace, guardrails, semantic, harness_dir }
     }
 
     fn safe_path(&self, rel: &str) -> Result<PathBuf> {
@@ -278,6 +306,8 @@ pub fn schema_for(name: &str) -> Option<ToolSchema> {
         "save_fact" => ("Save a durable fact to semantic memory for future runs.",
             s(json!({"fact": {"type": "string"}}), vec!["fact"])),
         "recall" => ("Search semantic memory for durable facts.",
+            s(json!({"query": {"type": "string"}}), vec!["query"])),
+        "search_docs" => ("Search the harness's ingested document corpus (RAG).",
             s(json!({"query": {"type": "string"}}), vec!["query"])),
         _ => return None,
     };
@@ -370,6 +400,34 @@ pub fn execute(ctx: &ToolCtx, name: &str, input: &Value) -> (String, bool) {
                 }
                 None => Ok("semantic memory disabled for this harness".into()),
             },
+            "search_docs" => {
+                let q = arg("query")?;
+                let path = ctx.harness_dir.join("memory/rag.json");
+                let items: Vec<serde_json::Value> = fs::read_to_string(&path)
+                    .ok().and_then(|t| serde_json::from_str(&t).ok())
+                    .unwrap_or_default();
+                if items.is_empty() {
+                    return Ok("no documents ingested for this harness \
+                               (harness rag <dir> add <path|url>)".into());
+                }
+                let q_tok = tokens(&q);
+                let mut scored: Vec<(f64, String, String)> = items.iter()
+                    .filter_map(|it| {
+                        let text = it["text"].as_str()?;
+                        let t = tokens(text);
+                        let inter = q_tok.intersection(&t).count() as f64;
+                        Some((inter / (q_tok.len() as f64 + 1e-9),
+                              it["source"].as_str().unwrap_or("").to_string(),
+                              text.to_string()))
+                    }).collect();
+                scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+                let hits: Vec<String> = scored.into_iter().take(4)
+                    .filter(|(s, _, _)| *s > 0.25)
+                    .map(|(_, src, text)| format!("[source: {}]\n{}", src, text))
+                    .collect();
+                Ok(if hits.is_empty() { "(nothing relevant in the corpus)".into() }
+                   else { hits.join("\n\n") })
+            }
             other => anyhow::bail!("unknown tool '{}'", other),
         }
     })();

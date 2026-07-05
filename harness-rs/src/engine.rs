@@ -54,6 +54,8 @@ pub fn run_agent(agent: &AgentSpec, system: &str, task: &str, ctx: &ToolCtx,
                                    input_tokens: in_tok, output_tokens: out_tok });
         }
 
+        // context management: prune all but the newest 4 tool results
+        prune_tool_results(&mut messages, 4);
         let resp = provider.chat(system, &messages, &tools, 4096)?;
         in_tok += resp.input_tokens;
         out_tok += resp.output_tokens;
@@ -94,6 +96,33 @@ pub fn run_agent(agent: &AgentSpec, system: &str, task: &str, ctx: &ToolCtx,
                     input_tokens: in_tok, output_tokens: out_tok })
 }
 
+const PRUNED: &str = "[old tool result pruned to save context]";
+
+fn prune_tool_results(messages: &mut [Value], keep_last: usize) {
+    // collect (msg_idx, Some(block_idx)|None) for both dialects
+    let mut locs: Vec<(usize, Option<usize>)> = vec![];
+    for (mi, m) in messages.iter().enumerate() {
+        if m["role"] == "tool" {
+            locs.push((mi, None));                       // openai dialect
+        } else if m["role"] == "user" {
+            if let Some(arr) = m["content"].as_array() {
+                for (bi, b) in arr.iter().enumerate() {
+                    if b["type"] == "tool_result" {
+                        locs.push((mi, Some(bi)));       // anthropic dialect
+                    }
+                }
+            }
+        }
+    }
+    let cut = locs.len().saturating_sub(keep_last);
+    for (mi, bi) in locs.into_iter().take(cut) {
+        match bi {
+            None => messages[mi]["content"] = json!(PRUNED),
+            Some(bi) => messages[mi]["content"][bi]["content"] = json!(PRUNED),
+        }
+    }
+}
+
 // ───────────────────────────────────────────────────────── orchestrator
 pub struct Orchestrator<'a> {
     pub spec: &'a HarnessSpec,
@@ -130,7 +159,7 @@ impl<'a> Orchestrator<'a> {
                                       &self.spec.memory);
         println!("  ▶ {} [{}]", name, agent.model);
         let ctx = ToolCtx::new(self.workspace.clone(), &self.spec.guardrails,
-                               self.semantic.as_ref());
+                               self.semantic.as_ref(), self.harness_dir.clone());
         let out = run_agent(agent, &system, task, &ctx, self.spec, &self.trace,
                             self.tokens_used.load(Ordering::Relaxed), delegate)?;
         self.tokens_used.fetch_add(out.input_tokens + out.output_tokens,
@@ -287,7 +316,7 @@ impl<'a> Orchestrator<'a> {
             final deliverable yourself.\nTeam:\n{}", roster2);
         println!("  ▶ {} [{}] (supervisor, depth {})", name, agent.model, depth);
         let ctx = ToolCtx::new(self.workspace.clone(), &self.spec.guardrails,
-                               self.semantic.as_ref());
+                               self.semantic.as_ref(), self.harness_dir.clone());
         use std::sync::atomic::Ordering;
         let out = run_agent(agent, &system, task, &ctx, self.spec, &self.trace,
                             self.tokens_used.load(Ordering::Relaxed),

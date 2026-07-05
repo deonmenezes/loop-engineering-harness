@@ -57,7 +57,9 @@ judgment agents (formatting, extraction, routing).
 - tools: subset of {tool_names}. Least privilege: only what the role needs. \
 Research roles need web_search+fetch_url; builder roles need file tools + \
 run_shell; pure-reasoning roles need few or none. save_fact/recall for roles \
-that benefit from cross-run memory.
+that benefit from cross-run memory. Give search_docs to any role that should \
+consult the harness's ingested reference corpus (RAG). Agents may also list \
+"mcp:<server>" to use an external MCP server's tools if the user mentions one.
 - skills: [name] of ONE skill file you will also write (procedural memory).
 
 # Quality criteria

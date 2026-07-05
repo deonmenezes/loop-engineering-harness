@@ -53,6 +53,15 @@ class Provider:
         Each result: {"id": tool_call_id, "content": str, "is_error": bool}"""
         raise NotImplementedError
 
+    PRUNED = "[old tool result pruned to save context]"
+
+    def prune_tool_results(self, messages: list, keep_last: int = 4) -> list:
+        """Context management: replace all but the newest N tool results with
+        a placeholder. The model's own text (its working notes) is never
+        touched — agents are told results may vanish, so they extract what
+        they need into their own messages as they go."""
+        return messages
+
 
 # ---------------------------------------------------------------------------
 # Anthropic
@@ -88,6 +97,20 @@ class AnthropicProvider(Provider):
              "content": r["content"], "is_error": r.get("is_error", False)}
             for r in results
         ]}
+
+    def prune_tool_results(self, messages, keep_last=4):
+        locs = []
+        for mi, m in enumerate(messages):
+            if isinstance(m, dict) and m.get("role") == "user" \
+               and isinstance(m.get("content"), list):
+                for bi, b in enumerate(m["content"]):
+                    if isinstance(b, dict) and b.get("type") == "tool_result":
+                        locs.append((mi, bi))
+        for mi, bi in locs[:-keep_last] if keep_last else locs:
+            b = messages[mi]["content"][bi]
+            if b.get("content") != self.PRUNED:
+                b["content"] = self.PRUNED
+        return messages
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +162,14 @@ class OpenAICompatProvider(Provider):
         # the loop flattens it (see core/loop.py).
         return [{"role": "tool", "tool_call_id": r["id"], "content": r["content"]}
                 for r in results]
+
+    def prune_tool_results(self, messages, keep_last=4):
+        locs = [i for i, m in enumerate(messages)
+                if isinstance(m, dict) and m.get("role") == "tool"]
+        for i in locs[:-keep_last] if keep_last else locs:
+            if messages[i].get("content") != self.PRUNED:
+                messages[i]["content"] = self.PRUNED
+        return messages
 
 
 # ---------------------------------------------------------------------------

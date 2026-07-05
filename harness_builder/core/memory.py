@@ -61,10 +61,15 @@ class SemanticMemory:
             return None
 
     def add(self, fact: str, source: str = ""):
-        self.items.append({"fact": fact, "source": source,
-                           "ts": datetime.now(timezone.utc).isoformat(),
+        ts = datetime.now(timezone.utc).isoformat()
+        self.items.append({"fact": fact, "source": source, "ts": ts,
                            "emb": self._embed(fact)})
         self._save()
+        # human-readable md mirror — memory you can open, edit, and diff
+        md = self.path.parent / "MEMORY.md"
+        header = "" if md.exists() else "# Semantic memory (durable facts)\n\n"
+        with open(md, "a") as f:
+            f.write(f"{header}- {fact}  <!-- {source} {ts[:10]} -->\n")
 
     @staticmethod
     def _cos(a, b):
@@ -85,12 +90,12 @@ class SemanticMemory:
         for it in self.items:
             if q_emb and it.get("emb"):
                 s = self._cos(q_emb, it["emb"])
-            else:  # fallback: token overlap (always works, zero deps)
+            else:  # fallback: query-coverage overlap (always works, zero deps)
                 t = self._tokens(it["fact"])
-                s = len(q_tok & t) / (len(q_tok | t) + 1e-9)
+                s = len(q_tok & t) / (len(q_tok) + 1e-9)
             scored.append((s, it["fact"]))
         scored.sort(reverse=True, key=lambda x: x[0])
-        return [f for s, f in scored[:k] if s > 0.05]
+        return [f for s, f in scored[:k] if s > 0.2]
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +185,15 @@ def assemble_context(harness_dir: Path, agent_spec, task: str, memory_spec) -> s
         if facts:
             blocks.append("# SEMANTIC MEMORY (durable facts, top-k relevant)\n"
                           + "\n".join(f"- {f}" for f in facts))
+
+    from .rag import RagStore
+    rag = RagStore(harness_dir)
+    if len(rag):
+        hits = rag.search(task, k=3)
+        if hits:
+            blocks.append("# REFERENCE DOCUMENTS (RAG top-k for this task)\n"
+                          + "\n\n".join(f"[{h['source']}]\n{h['text'][:800]}"
+                                          for h in hits))
 
     if memory_spec.episodic:
         recent = EpisodicMemory(harness_dir).recent(3)

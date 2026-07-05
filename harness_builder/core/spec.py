@@ -81,6 +81,7 @@ class HarnessSpec:
     guardrails: GuardrailSpec = field(default_factory=GuardrailSpec)
     eval: EvalSpec = field(default_factory=EvalSpec)
     loop: LoopSpec = field(default_factory=LoopSpec)
+    mcp_servers: list = field(default_factory=list)  # [{name, command, args}]
 
     # ------------------------------------------------------------------ io
     @staticmethod
@@ -102,6 +103,7 @@ class HarnessSpec:
             guardrails=GuardrailSpec(**d.get("guardrails", {})),
             eval=EvalSpec(**d.get("eval", {})),
             loop=LoopSpec(**d.get("loop", {})),
+            mcp_servers=d.get("mcp_servers", []),
         )
         spec.validate()
         return spec

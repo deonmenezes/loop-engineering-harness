@@ -112,6 +112,20 @@ are just a base_url).
 
 Force a whole harness onto one model: `--model-override groq/llama-3.3-70b-versatile`.
 
+## What a generated harness contains
+
+| Capability | How |
+|---|---|
+| System prompts | architect writes a full 150-400 word brief per agent |
+| Memory as files | skills/*.md (procedural) · memory/MEMORY.md (facts, human-editable) · semantic.json · episodic store |
+| Subagents | 6 team patterns; supervisors get a `delegate` tool |
+| **MCP — consume** | `mcp_servers:` in harness.yaml + `tools: ["mcp:<name>"]` → agents use any external MCP server's tools |
+| **MCP — deploy** | `harness serve-mcp` exposes build_harness / run_<h> / loop_<h> to Claude Code etc: `claude mcp add loop-engineer -- harness serve-mcp` |
+| **RAG** | `harness rag <h> add <files\|dirs\|urls>` → chunked corpus; `search_docs` tool + auto top-k into each agent's working memory |
+| Domain tool references | least-privilege per agent from the registry (files, shell, web, memory, docs, MCP) |
+| Context management | working-memory assembly per run + in-loop pruning (oldest tool results collapsed, newest 4 kept, agent notes never touched) |
+| Any LLM | anthropic / openai / groq / openrouter / ollama, mixable per agent |
+
 ## Interactive TUI (opencode-style)
 
 Bare `harness` drops you into an interactive shell — chat-first, like opencode:

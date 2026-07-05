@@ -36,11 +36,18 @@ class Orchestrator:
         self.trace = Trace(spec.name)
         self.tokens_used = 0
         self.semantic = SemanticMemory(self.harness_dir) if spec.memory.semantic else None
+        from ..core.rag import RagStore
+        self.rag = RagStore(self.harness_dir)
+        self.mcp_pool = None
+        if spec.mcp_servers:
+            from ..mcp.client import MCPPool
+            self.mcp_pool = MCPPool(spec.mcp_servers, base_dir=self.harness_dir)
 
     # ------------------------------------------------------------------
     def _ctx(self) -> toolreg.ToolContext:
         return toolreg.ToolContext(self.workspace, self.spec.guardrails,
-                                   semantic_memory=self.semantic, trace=self.trace)
+                                   semantic_memory=self.semantic, trace=self.trace,
+                                   rag=self.rag, mcp_pool=self.mcp_pool)
 
     def _run_one(self, agent_name: str, task: str) -> str:
         agent = self.spec.agent(agent_name)
@@ -67,6 +74,8 @@ class Orchestrator:
             EpisodicMemory(self.harness_dir).add(task, reply[:1500])
             maybe_consolidate(self.harness_dir, self.spec.memory, self.trace)
         self.trace.finish()
+        if self.mcp_pool:
+            self.mcp_pool.close()
         return reply
 
     # ----------------------------------------------------------- patterns

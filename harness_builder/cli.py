@@ -23,6 +23,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import signal
+try:  # die quietly on closed pipes (harness rag ... | head)
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+except (AttributeError, ValueError):
+    pass
+
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
@@ -88,6 +94,27 @@ def cmd_loop(args):
                               run_harness_fn=one_run, fresh=args.fresh)
     done = sum(s.status == "done" for s in state.steps)
     print(f"\n{'═'*70}\nEXTERNAL LOOP: {done}/{len(state.steps)} steps complete\n{'═'*70}")
+
+
+def cmd_rag(args):
+    from .core.rag import RagStore
+    hdir = Path(args.harness) if Path(args.harness).is_dir() else Path(args.harness).parent
+    store = RagStore(hdir)
+    if args.action == "add":
+        for t in args.targets:
+            n = store.add_path_or_url(t)
+            print(f"ingested {t} -> {n} chunks")
+        print(f"corpus: {len(store)} chunks total")
+    elif args.action == "query":
+        for h in store.search(" ".join(args.targets), k=4):
+            print(f"--- [{h['source']}]\n{h['text'][:400]}\n")
+    elif args.action == "status":
+        print(f"{len(store)} chunks at {store.path}")
+
+
+def cmd_serve_mcp(_args):
+    from .mcp.server import serve
+    serve()
 
 
 def cmd_templates(_args):
@@ -171,6 +198,17 @@ def main():
                     help="discard saved loop state and replan from scratch")
     lp.add_argument("--model-override", default=None)
     lp.set_defaults(fn=cmd_loop)
+
+    rg = sub.add_parser("rag", help="manage a harness's document corpus (RAG)")
+    rg.add_argument("harness")
+    rg.add_argument("action", choices=["add", "query", "status"])
+    rg.add_argument("targets", nargs="*", help="files, dirs, or URLs (add) / query text")
+    rg.set_defaults(fn=cmd_rag)
+
+    mc = sub.add_parser("serve-mcp", help="deploy the loop engineer as an MCP "
+                        "server over stdio (claude mcp add loop-engineer -- "
+                        "harness serve-mcp)")
+    mc.set_defaults(fn=cmd_serve_mcp)
 
     t = sub.add_parser("templates", help="list bundled domain templates")
     t.set_defaults(fn=cmd_templates)
