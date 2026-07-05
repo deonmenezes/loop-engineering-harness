@@ -96,6 +96,30 @@ def list_files(ctx):
     return "\n".join(sorted(files)) or "(workspace is empty)"
 
 
+@tool("apply_patch", "Edit an existing file by exact search/replace. `find` "
+                     "must appear verbatim (copy it from the file). Safer than "
+                     "rewriting whole files — prefer this for code changes.",
+      {"type": "object",
+       "properties": {"path": {"type": "string"}, "find": {"type": "string"},
+                      "replace": {"type": "string"},
+                      "replace_all": {"type": "boolean"}},
+       "required": ["path", "find", "replace"]})
+def apply_patch(ctx, path: str, find: str, replace: str, replace_all=False):
+    p = ctx.safe_path(path)
+    text = p.read_text(encoding="utf-8")
+    count = text.count(find)
+    if count == 0:
+        return (f"`find` not present in {path}. Read the file and copy an exact "
+                "snippet (including whitespace).")
+    if count > 1 and not replace_all:
+        return (f"`find` appears {count}x in {path}; add surrounding context to "
+                "make it unique, or set replace_all=true.")
+    new = text.replace(find, replace)
+    p.write_text(new, encoding="utf-8")
+    return f"applied {count if replace_all else 1} edit(s) to {path} " \
+           f"({len(new) - len(text):+d} chars)"
+
+
 # ------------------------------------------------------------------ shell
 @tool("run_shell", "Run a shell command in the workspace (cwd = workspace, 60s "
                    "timeout). Some commands are blocked by harness policy.",
@@ -113,6 +137,33 @@ def run_shell(ctx, command: str):
     if proc.stderr:
         out += f"stderr:\n{proc.stderr}\n"
     return out
+
+
+@tool("python_exec", "Run a short Python 3 snippet in the workspace (cwd = "
+                     "workspace, 30s). Returns stdout+stderr. Use for "
+                     "computation, data work, and quick checks.",
+      {"type": "object", "properties": {"code": {"type": "string"}},
+       "required": ["code"]})
+def python_exec(ctx, code: str):
+    import sys
+    proc = subprocess.run([sys.executable, "-c", code], cwd=ctx.workspace,
+                          capture_output=True, text=True, timeout=30)
+    out = f"exit_code: {proc.returncode}\n"
+    if proc.stdout:
+        out += f"stdout:\n{proc.stdout}\n"
+    if proc.stderr:
+        out += f"stderr:\n{proc.stderr}\n"
+    return out
+
+
+@tool("plan", "Record or update your working plan as a markdown checklist "
+              "(saved to workspace/PLAN.md). Returns the plan so you can track "
+              "progress across turns. Call again to revise it.",
+      {"type": "object", "properties": {"plan": {"type": "string"}},
+       "required": ["plan"]})
+def plan(ctx, plan: str):
+    (ctx.workspace / "PLAN.md").write_text(plan, encoding="utf-8")
+    return "plan saved:\n" + plan
 
 
 # ------------------------------------------------------------------ web
@@ -145,6 +196,83 @@ def fetch_url(ctx, url: str):
     text = re.sub(r"<(script|style).*?</\1>", " ", html, flags=re.S)
     text = re.sub(r"<[^>]+>", " ", text)
     return re.sub(r"\s+", " ", text)[:10000]
+
+
+@tool("http_get", "HTTP GET a URL and return the raw body (JSON/text, not "
+                  "HTML-stripped). Use for APIs; use fetch_url for web pages.",
+      {"type": "object", "properties": {"url": {"type": "string"}},
+       "required": ["url"]})
+def http_get(ctx, url: str):
+    import urllib.request
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "harness/1.0", "Accept": "application/json, */*"})
+    return urllib.request.urlopen(req, timeout=20).read().decode(
+        "utf-8", "ignore")[:10000]
+
+
+# ---------------------------------------------------------------- generation
+def _generate_media(ctx, kind: str, prompt: str, extra: dict, filename: str):
+    """Call a configured <KIND>_API_URL endpoint, or (unconfigured) write a
+    ready-to-run prompt spec to the workspace so the pipeline still ships an
+    artifact. Pluggable to Higgsfield/Runway/DALL·E/Sora/etc. via env."""
+    import json
+    import os
+    import urllib.request
+    url = os.environ.get(f"{kind}_API_URL")
+    if url:
+        headers = {"Content-Type": "application/json"}
+        key = os.environ.get(f"{kind}_API_KEY")
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        body = json.dumps({"prompt": prompt, **extra}).encode()
+        try:
+            req = urllib.request.Request(url, data=body, headers=headers)
+            resp = urllib.request.urlopen(req, timeout=180).read().decode(
+                "utf-8", "ignore")
+            return f"{kind.lower()} generation response:\n{resp[:3000]}"
+        except Exception as e:
+            return f"{kind.lower()} endpoint {url} error: {e}"
+    spec = f"# {kind.title()} generation spec\nprompt: {prompt}\n" + \
+        "\n".join(f"{k}: {v}" for k, v in extra.items())
+    ctx.safe_path(filename).write_text(spec, encoding="utf-8")
+    return (f"No {kind}_API_URL configured — wrote a ready-to-run prompt spec to "
+            f"{filename}. Paste it into your generator, or set {kind}_API_URL "
+            f"(+ optional {kind}_API_KEY) to render here.\n\n{spec}")
+
+
+@tool("generate_image", "Generate an image from a prompt. Calls IMAGE_API_URL "
+                        "if configured; otherwise writes a ready-to-run image "
+                        "prompt spec to the workspace.",
+      {"type": "object",
+       "properties": {"prompt": {"type": "string"},
+                      "aspect_ratio": {"type": "string"},
+                      "style": {"type": "string"},
+                      "filename": {"type": "string"}},
+       "required": ["prompt"]})
+def generate_image(ctx, prompt: str, aspect_ratio="16:9", style="",
+                   filename="image_prompt.txt"):
+    return _generate_media(ctx, "IMAGE", prompt,
+                           {"aspect_ratio": aspect_ratio, "style": style},
+                           filename)
+
+
+@tool("generate_video", "Generate a video clip from a prompt. Calls "
+                        "VIDEO_API_URL if configured (Higgsfield/Runway/Sora/"
+                        "etc.); otherwise writes a ready-to-run video prompt "
+                        "spec to the workspace.",
+      {"type": "object",
+       "properties": {"prompt": {"type": "string"},
+                      "duration_s": {"type": "number"},
+                      "aspect_ratio": {"type": "string"},
+                      "camera": {"type": "string"},
+                      "filename": {"type": "string"}},
+       "required": ["prompt"]})
+def generate_video(ctx, prompt: str, duration_s=4, aspect_ratio="16:9",
+                   camera="", filename="video_prompt.txt"):
+    return _generate_media(ctx, "VIDEO", prompt,
+                           {"duration_s": duration_s,
+                            "aspect_ratio": aspect_ratio, "camera": camera},
+                           filename)
 
 
 # ------------------------------------------------------------------ memory

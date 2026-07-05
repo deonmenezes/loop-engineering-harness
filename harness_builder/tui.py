@@ -39,12 +39,14 @@ BANNER = r"""[bold red]
 HELP = """\
 [bold]Chat[/]
   <plain text>              run it as a task on the active harness
+  /<harness> <task>         activate and run a local harness by name
   /loop <task>              same, wrapped in the retry goal loop (eval gate)
   /goal <goal>              EXTERNAL loop: plan -> checklist -> one harness run
                             per step -> check off -> replan on failure (resumable)
 
 [bold]Harnesses[/]
-  /build <prompt>           architect a new harness from a description
+  /build <prompt>           architect a NEW standalone harness: own app + TUI,
+                            zero deps, {{slot}} prompt anatomy in prompts/
   /templates                list bundled domain templates
   /use <name>               copy a template into ./harnesses and activate it
   /open <path>              activate an existing harness directory
@@ -86,7 +88,9 @@ class Shell:
                      if (d / "harness.yaml").exists()} if tdir.exists() else {}
         local = {str(p.parent): None for p in Path("harnesses").glob("*/harness.yaml")} \
             if Path("harnesses").exists() else {}
+        local_commands = {f"/{Path(path).name}": None for path in local}
         return NestedCompleter.from_nested_dict({
+            **local_commands,
             "/build": None, "/templates": None, "/use": templates,
             "/open": local or None, "/list": None, "/inspect": None,
             "/loop": None, "/model": {
@@ -137,6 +141,14 @@ class Shell:
             harness_dir = build_harness(prompt)
         self._activate(harness_dir)
         self._refresh_completer()
+        console.print(Panel(
+            f"[bold]{harness_dir.name}[/] is a standalone app — it runs "
+            f"without harness-builder:\n\n"
+            f"  cd {harness_dir} && ./{harness_dir.name}\n\n"
+            f"[dim]prompts/ANATOMY.md maps every {{{{slot}}}} · edit "
+            f"prompts/*.md + skills/*.md freely · /prompts inside its TUI "
+            f"shows the anatomy[/]",
+            title="standalone harness created", border_style="green"))
 
     def do_templates(self, _):
         tdir = Path(__file__).resolve().parent.parent / "templates"
@@ -161,7 +173,10 @@ class Shell:
         if not dst.exists():
             shutil.copytree(src, dst)
             (dst / "memory").mkdir(exist_ok=True)
-            console.print(f"[dim]copied template -> {dst}[/]")
+            from .builder.scaffold import scaffold
+            scaffold(HarnessSpec.load(dst), dst)
+            console.print(f"[dim]copied template -> {dst} "
+                          f"(standalone app included: cd {dst} && ./{name})[/]")
         self._activate(dst)
         self._refresh_completer()
 
@@ -326,7 +341,13 @@ class Shell:
                 if fn:
                     fn(arg)
                 else:
-                    console.print(f"[yellow]unknown command /{cmd} — /help[/]")
+                    harness_dir = Path("harnesses") / cmd
+                    if (harness_dir / "harness.yaml").exists():
+                        self._activate(harness_dir)
+                        self.run_task(f"/{cmd}" + (f" {arg}" if arg else ""),
+                                      loop=False)
+                    else:
+                        console.print(f"[yellow]unknown command /{cmd} — /help[/]")
             else:
                 self.run_task(line, loop=False)
 

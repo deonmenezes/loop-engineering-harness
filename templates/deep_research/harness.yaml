@@ -1,4 +1,5 @@
 name: deep_research
+command: digger
 description: 'Multi-angle research team: web + academic + community, cross-validated into a report.'
 pattern: fanout
 agents:

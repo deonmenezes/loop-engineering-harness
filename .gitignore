@@ -1,8 +1,25 @@
 .env
 venv/
+.venv/
 __pycache__/
 *.pyc
 traces/
 workspace/
 harnesses/
 *.egg-info/
+
+# vendored reference clone (pi_agent_rust) — cloned on demand, not committed
+vendor/
+
+# OS / tooling cruft
+.DS_Store
+.codex/
+.omc/
+.pytest_cache/
+
+# generated-harness runtime state
+runs/
+loop_state/
+goal_state/
+upgrades/
+mcp.json

@@ -15,6 +15,7 @@ the spec + skills + memory stores are what persist.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -76,6 +77,7 @@ class HarnessSpec:
     description: str
     pattern: str                              # one of PATTERNS
     agents: list[AgentSpec]
+    command: str = ""                         # friendly launcher name (e.g. youvid)
     flow: list = field(default_factory=list)  # pattern-specific wiring (agent names)
     supervisor: str | None = None             # for supervisor/hierarchical patterns
     memory: MemorySpec = field(default_factory=MemorySpec)
@@ -99,6 +101,7 @@ class HarnessSpec:
         spec = HarnessSpec(
             name=d["name"], description=d.get("description", ""),
             pattern=d["pattern"], agents=agents,
+            command=d.get("command", ""),
             flow=d.get("flow", []), supervisor=d.get("supervisor"),
             memory=MemorySpec(**d.get("memory", {})),
             guardrails=GuardrailSpec(**d.get("guardrails", {})),
@@ -126,6 +129,8 @@ class HarnessSpec:
     def validate(self):
         if self.pattern not in PATTERNS:
             raise ValueError(f"pattern must be one of {PATTERNS}, got '{self.pattern}'")
+        if self.command and not re.fullmatch(r"[a-z][a-z0-9_-]{0,23}", self.command):
+            raise ValueError(f"command must be short lowercase (got '{self.command}')")
         names = [a.name for a in self.agents]
         if len(names) != len(set(names)):
             raise ValueError(f"duplicate agent names: {names}")

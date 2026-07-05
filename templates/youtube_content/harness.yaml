@@ -1,4 +1,5 @@
 name: youtube_content
+command: youvid
 description: 'YouTube content team: trend research, scripting, SEO, thumbnails — coordinated by a director.'
 pattern: supervisor
 agents:

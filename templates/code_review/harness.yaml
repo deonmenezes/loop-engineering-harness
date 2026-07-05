@@ -1,4 +1,5 @@
 name: code_review
+command: crev
 description: 'Parallel code review: architecture, security, performance, style — merged into one report.'
 pattern: fanout
 agents:

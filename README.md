@@ -1,6 +1,67 @@
 # Loop Engineer Builder
 
-**Prompt in → loop-engineered agent system out.**
+**Prompt in → a completely new, standalone harness out.**
+
+```bash
+harness "prompt goes here"        # that's the whole interface
+```
+
+One quoted sentence and the architect designs an agent team, then compiles it
+into its **own app** — not a config for this repo, a self-contained program:
+one Python file (stdlib only, nothing to install), a **full TUI cloned from
+[pi_agent_rust](https://github.com/Dicklesworthstone/pi_agent_rust)** with
+**token streaming** (replies land word-by-word like Claude Code / Codex), and
+every architectural prompt exposed as an editable file with explicit `{{slot}}`
+markers showing exactly where each piece goes. Each harness gets a **short,
+memorable launch command** — a YouTube harness is `youvid`, a research one
+`digger`, a code reviewer `crev`.
+
+```bash
+cd harnesses/deep_research
+./digger                          # pi-style TUI: alt-screen frame loop,
+                                  # streaming text, collapsible tool output
+                                  # (ctrl+o), spinner, themes, /-autocomplete
+./digger "a task"                 # one-shot
+./digger --loop "a task"          # judge-gated retries until quality passes
+./install.sh                      # put `digger` on your PATH, run from anywhere
+```
+
+**Every build is deliberately good, not a lucky one-shot.** The architect
+detects the domain (coding, video, research, writing, data, design, marketing)
+and injects a senior-practitioner **playbook** — the right team shape, tools,
+and quality bar for that field — then runs a **design → critique → refine
+loop**: a ruthless critic scores the design and the architect revises until it
+clears the bar. A coding harness comes out with `apply_patch` / `run_shell` /
+`python_exec` / `plan` and executable-grade quality gates; a video harness
+(Higgsfield/Runway/Sora-style) comes out with `generate_image` / `generate_video`
+and shot-by-shot production prompts.
+
+**Every generated harness is also self-driving, extensible, and self-improving:**
+
+- **MCP toolkits** — drop an `mcp.json` next to the app and give any agent the
+  tool `mcp:<server>`; it gains every tool that server exposes (filesystem,
+  GitHub, Slack, browsers, databases, …). `/mcp` lists what's connected.
+- **`/goal <objective>` — loop until the goal is met.** A planner decomposes the
+  goal into steps; the team runs one step per fresh cycle; a per-step judge gates
+  each; passing checks it off, failing retries then replans around the blocker.
+  The plan lives in `goal_state/` — kill it, rerun the same goal, it resumes.
+- **`/improve <task>` — metaprompting.** The harness rewrites its own weakest
+  agent prompt until the task passes the quality gate (originals backed up).
+- **`/uploop [PRD]` — the upgrade loop.** Iterates over *every segment* of the
+  harness — each identity, each skill, each output format, the quality criteria —
+  upgrades them, and even **adds new agents and tools**, steered by an optional
+  PRD. This is how a harness upskills itself toward "the ultimate version."
+- **Lifecycle hooks** — drop scripts in `hooks/` (`pre_run`, `post_agent`,
+  `on_gate_fail`, `on_goal_step`, `on_uploop`, …) or declare commands in
+  `harness.json`. They fire at every lifecycle point with a JSON payload on
+  stdin; use them to run tests, commit, or notify Slack — never blocking.
+- **Credential auto-detection — usually no keys to paste.** Each provider is
+  resolved from its env var, then the logins you already have on this computer:
+  Anthropic via `ANTHROPIC_API_KEY` → `CLAUDE_CODE_OAUTH_TOKEN`
+  (`claude setup-token`) → the Claude Code CLI login (macOS Keychain /
+  `~/.claude`); OpenAI via `OPENAI_API_KEY` → the Codex CLI (`~/.codex/auth.json`).
+  `/auth` shows exactly what was detected and from where. (OAuth tokens are sent
+  as Bearer tokens, subject to each provider's terms; an API key always works.)
 
 The stack, loops on loops (prompt → context → harness → loop engineering):
 
@@ -29,6 +90,8 @@ resumes exactly where it stopped.
 harness build "Build a harness for deep research. I need an agent team that can
 investigate any topic from multiple angles — web search, academic sources,
 community sentiment — then cross-validate findings and produce a report."
+# -> harnesses/deep_research/: a standalone app with its own TUI (see above);
+#    the commands below are the OPTIONAL builder-side tooling on the same dir
 
 harness run harnesses/deep_research --task "Solid-state batteries: state of the art in 2026"
 
@@ -112,6 +175,42 @@ are just a base_url).
 
 Force a whole harness onto one model: `--model-override groq/llama-3.3-70b-versatile`.
 
+## What a generated harness IS
+
+A standalone directory that owns itself — `harness build` is the last time it
+touches this repo:
+
+```
+harnesses/<name>/
+├── <name>              executable launcher
+├── app.py              the WHOLE harness: providers, tools, 6 patterns,
+│                       guardrails, memory, judge gate, interactive TUI —
+│                       Python stdlib only, zero pip installs
+├── harness.json        team wiring the app reads
+├── prompts/ANATOMY.md  the {{slot}} assembly template (see below)
+├── prompts/<agent>.md  §1 IDENTITY per agent — edit and re-run, no rebuild
+├── skills/*.md         §3 BEHAVIORAL RULES
+├── memory/MEMORY.md    durable facts injected every run
+├── docs/               drop .md/.txt files → agents search them
+└── workspace/ runs/    sandbox + one JSONL trace per run
+```
+
+Every agent's system prompt is assembled fresh per run from
+`prompts/ANATOMY.md`, whose five explicit slots show exactly where each
+architectural prompt goes:
+
+```
+{{IDENTITY}}          <- prompts/<agent>.md          who the agent is
+{{ENVIRONMENT}}       <- injected live               runtime truth, never hand-written
+{{BEHAVIORAL_RULES}}  <- skills/*.md                 the craft — largest section
+{{OUTPUT_FORMAT}}     <- harness.json output_format  response shape
+{{SAFETY}}            <- generated from guardrails   prompt and code cannot drift
+```
+
+`/prompts` inside the generated TUI renders this map with per-file token
+estimates. `harness scaffold <dir>` regenerates the app for an existing
+harness without touching your prompt/skill/memory edits.
+
 ## What a generated harness contains
 
 | Capability | How |
@@ -120,7 +219,7 @@ Force a whole harness onto one model: `--model-override groq/llama-3.3-70b-versa
 | Memory as files | skills/*.md (procedural) · memory/MEMORY.md (facts, human-editable) · semantic.json · episodic store |
 | Subagents | 6 team patterns; supervisors get a `delegate` tool |
 | **MCP — consume** | `mcp_servers:` in harness.yaml + `tools: ["mcp:<name>"]` → agents use any external MCP server's tools |
-| **MCP — deploy** | `harness serve-mcp` exposes build_harness / run_<h> / loop_<h> to Claude Code etc: `claude mcp add loop-engineer -- harness serve-mcp` |
+| **MCP — deploy** | `harness serve-mcp` exposes build_harness / run_<h> / loop_<h> to Codex, Claude Code, and other MCP hosts |
 | **RAG** | `harness rag <h> add <files\|dirs\|urls>` → chunked corpus; `search_docs` tool + auto top-k into each agent's working memory |
 | Domain tool references | least-privilege per agent from the registry (files, shell, web, memory, docs, MCP) |
 | Context management | working-memory assembly per run + in-loop pruning (oldest tool results collapsed, newest 4 kept, agent notes never touched) |
@@ -173,6 +272,29 @@ native format, so the SAME team design runs inside your daily driver:
 Team structure, system prompts, skills, and pattern wiring port; our memory
 stores, budgets, and goal loop don't — the hosts have their own equivalents.
 
+### Connect Codex directly over MCP
+
+To let Codex build and run harnesses as tools, install this project and register
+its stdio server in a project-scoped `.codex/config.toml`:
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -e .
+```
+
+```toml
+[mcp_servers.harness_builder]
+command = "/absolute/path/to/harness-builder/.venv/bin/python"
+args = ["-m", "harness_builder.mcp.server"]
+cwd = "/absolute/path/to/harness-builder"
+tool_timeout_sec = 3600
+```
+
+Restart Codex after changing MCP configuration, then use `/mcp` to confirm the
+server and its `build_harness` and `list_harnesses` tools are available. Each
+harness created under `./harnesses` also adds `run_<name>` and `loop_<name>`
+tools on the next MCP connection.
+
 ## Setup
 
 ```bash
@@ -191,7 +313,8 @@ harness run harnesses/deep_research --task "..."
 
 Each is exactly what `harness build` would generate for its use case — read
 their `harness.yaml` + `skills/*.md` to learn how to write good ones. Try the
-matching prompts in `examples/prompts.md`.
+matching prompts in `examples/prompts.md`. `harness use <name>` copies one
+into ./harnesses and scaffolds its standalone app in the same step.
 
 ## Repository layout
 
@@ -206,7 +329,9 @@ harness_builder/
 │   ├── memory.py           working / procedural / semantic / episodic + summarizer
 │   └── tools.py            sandboxed tool registry (files, shell, web, memory)
 ├── runtime/orchestrator.py the six team patterns
-├── builder/architect.py    the meta-agent: prompt → harness
+├── builder/architect.py    the meta-agent: prompt → harness design
+├── builder/scaffold.py     design → STANDALONE app (stdlib-only runtime +
+│                           TUI + {{slot}} prompt anatomy, zero deps)
 ├── ops/                    trace (JSONL) + LLM-as-judge eval
 └── cli.py                  build · run · templates · use · inspect
 templates/                  8 domain harnesses
@@ -225,8 +350,29 @@ templates/                  8 domain harnesses
 - **New provider**: subclass or reuse `OpenAICompatProvider` in `providers/api.py`.
 - **New pattern**: one `_pattern_<name>` method in `runtime/orchestrator.py`
   plus the name in `core/spec.py:PATTERNS` and the architect prompt.
-- **Better generated harnesses**: edit `builder/architect.py:ARCHITECT_SYSTEM` —
-  the highest-leverage prompt in the codebase.
+- **Better generated harnesses**: edit `builder/architect.py:ARCHITECT_SYSTEM`
+  (the highest-leverage prompt) or add a domain playbook in
+  `builder/playbooks.py` (team shape + tools + quality bar for a new field).
+
+## Tests
+
+```bash
+pip install -e ".[dev]" && pytest        # 70 hermetic tests, no network/keys
+```
+
+Covers spec/command validation, domain-detection routing, scaffold output
+(streaming code, themes, launchers, MCP + loop config, hooks dir), the
+streamed-SSE parser for both provider dialects (incl. tool-call reassembly and
+fallback), the embedded tools (`apply_patch`/`python_exec`/`plan`/
+`generate_video`), the **autonomous engines** (goal loop completes + persists +
+resumes; `/improve` rewrites a prompt until it passes; `/uploop` upgrades
+segments and adds an agent), **MCP** (a real stdio server subprocess: connect →
+list → call → route), **hooks** (fire from dir + config, silent when absent),
+and every bundled template (loads → scaffolds → compiles).
+
+The generated TUI is a Python port of the interactive mode of
+[pi_agent_rust](https://github.com/Dicklesworthstone/pi_agent_rust) (MIT),
+vendored under `vendor/` for reference.
 
 ## Rust runtime (harness-rs/)
 

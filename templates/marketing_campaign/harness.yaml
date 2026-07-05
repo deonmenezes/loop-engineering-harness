@@ -1,4 +1,5 @@
 name: marketing_campaign
+command: hype
 description: 'Marketing campaign team: market research, copy, visual concepts, A/B test plans — with iterative
   review.'
 pattern: supervisor

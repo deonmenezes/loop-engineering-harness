@@ -1,4 +1,5 @@
 name: tech_docs
+command: docsy
 description: 'API documentation from a codebase: analyze endpoints, write docs with examples, review for
   completeness.'
 pattern: producer_reviewer

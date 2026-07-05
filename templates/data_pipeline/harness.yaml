@@ -1,4 +1,5 @@
 name: data_pipeline
+command: pipely
 description: 'Data pipeline design team: schema, ETL, validation, monitoring — hierarchically delegated.'
 pattern: hierarchical
 agents:

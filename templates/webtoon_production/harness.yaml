@@ -1,4 +1,5 @@
 name: webtoon_production
+command: toonly
 description: 'Webtoon episode pipeline: story -> character design prompts -> panel layout -> dialogue
   -> style-consistency review.'
 pattern: pipeline

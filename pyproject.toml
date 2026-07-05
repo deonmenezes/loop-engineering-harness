@@ -5,8 +5,15 @@ description = "Prompt -> domain-specific AI agent harness. Multi-provider, memor
 requires-python = ">=3.10"
 dependencies = ["anthropic>=0.40.0", "openai>=1.50.0", "pyyaml>=6.0", "python-dotenv>=1.0.0", "rich>=13.0", "prompt_toolkit>=3.0"]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 harness = "harness_builder.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [build-system]
 requires = ["setuptools>=68"]

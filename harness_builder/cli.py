@@ -1,6 +1,8 @@
 """
 harness — CLI for the meta-factory.
 
+  harness "prompt goes here"           # that's it: prompt in, standalone
+                                       # harness app out (own TUI, zero deps)
   harness build "Build a harness for deep research. I need ..."
   harness run harnesses/deep_research --task "Investigate solid-state batteries"
   harness run harnesses/deep_research --task "..." --loop --max-iterations 3
@@ -36,7 +38,9 @@ def cmd_build(args):
     from .builder.architect import build_harness
     build_harness(args.prompt, output_root=args.output,
                   architect_model=args.architect_model,
-                  default_model=args.default_model)
+                  default_model=args.default_model,
+                  refine_rounds=args.refine_rounds,
+                  pass_threshold=args.pass_threshold)
 
 
 def cmd_run(args):
@@ -143,7 +147,29 @@ def cmd_use(args):
         sys.exit(f"{dst} already exists")
     shutil.copytree(src, dst)
     (dst / "memory").mkdir(exist_ok=True)
-    print(f"copied -> {dst}\nRun it:\n  harness run {dst} --task \"...\"")
+    from .builder.scaffold import scaffold
+    from .core.spec import HarnessSpec
+    from .builder.scaffold import derive_command
+    spec = HarnessSpec.load(dst)
+    scaffold(spec, dst)
+    command = spec.command or derive_command(spec.name)
+    print(f"copied -> {dst} (standalone app included)\nRun it:\n"
+          f"  cd {dst} && ./{command}\n"
+          f"  ./install.sh   # then just type `{command}` anywhere")
+
+
+def cmd_scaffold(args):
+    from .builder.scaffold import scaffold
+    from .core.spec import HarnessSpec
+    spec = HarnessSpec.load(args.harness)
+    hdir = Path(args.harness) if Path(args.harness).is_dir() \
+        else Path(args.harness).parent
+    scaffold(spec, hdir)
+    from .builder.scaffold import derive_command
+    command = spec.command or derive_command(spec.name)
+    print(f"standalone app regenerated -> {hdir}/\n"
+          f"  cd {hdir} && ./{command}\n"
+          f"(existing prompts/, skills/, memory/, themes/ edits were preserved)")
 
 
 def cmd_export(args):
@@ -174,12 +200,17 @@ def main():
                                 description="Prompt -> domain-specific AI agent harness")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    b = sub.add_parser("build", help="generate a new harness from a prompt")
+    b = sub.add_parser("build", help="generate a NEW standalone harness (own "
+                       "app + TUI, zero deps) from a prompt")
     b.add_argument("prompt")
     b.add_argument("--output", default="harnesses")
     b.add_argument("--architect-model", default="anthropic/claude-sonnet-4-6")
     b.add_argument("--default-model", default="anthropic/claude-sonnet-4-6",
                    help="default model for generated agents (any provider/model)")
+    b.add_argument("--refine-rounds", type=int, default=2,
+                   help="design self-critique/revise rounds for quality (0 = off)")
+    b.add_argument("--pass-threshold", type=float, default=8.0,
+                   help="design critic score (0-10) that ends refinement early")
     b.set_defaults(fn=cmd_build)
 
     r = sub.add_parser("run", help="run a harness on a task")
@@ -226,9 +257,15 @@ def main():
     t = sub.add_parser("templates", help="list bundled domain templates")
     t.set_defaults(fn=cmd_templates)
 
-    u = sub.add_parser("use", help="copy a bundled template into ./harnesses")
+    u = sub.add_parser("use", help="copy a bundled template into ./harnesses "
+                       "(standalone app included)")
     u.add_argument("name")
     u.set_defaults(fn=cmd_use)
+
+    sc = sub.add_parser("scaffold", help="(re)generate the standalone app for "
+                        "an existing harness; preserves prompt/skill edits")
+    sc.add_argument("harness")
+    sc.set_defaults(fn=cmd_scaffold)
 
     i = sub.add_parser("inspect", help="show a harness's team and gate")
     i.add_argument("harness")
@@ -244,6 +281,13 @@ def main():
         from .tui import main as tui_main
         tui_main()
         return
+
+    # `harness "prompt goes here"` — a quoted sentence builds a harness.
+    # Only multi-word args qualify, so a mistyped subcommand still errors.
+    known = {a for a in sub.choices} | {"-h", "--help"}
+    if sys.argv[1] not in known and not sys.argv[1].startswith("-") \
+            and " " in sys.argv[1]:
+        sys.argv.insert(1, "build")
 
     args = p.parse_args()
     args.fn(args)
