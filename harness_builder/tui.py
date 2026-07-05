@@ -307,11 +307,16 @@ class Shell:
     # -------------------------------------------------------------- loop
     def repl(self):
         console.print(BANNER)
-        if not any(os.environ.get(k) for k in
-                   ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY",
-                    "OPENROUTER_API_KEY")):
-            console.print("[yellow]⚠ no provider API keys in env — /build and "
-                          "task runs will fail until you set one (.env)[/]\n")
+        from .core import auth
+        detected = [f"{p} ({src})" for p, (ok, src) in auth.available().items()
+                    if ok and p != "ollama"]
+        if detected:
+            console.print("[dim]auth auto-detected — "
+                          + ", ".join(detected) + "[/]\n")
+        else:
+            console.print("[yellow]⚠ no LLM credentials found — set "
+                          "ANTHROPIC_API_KEY, run `claude setup-token`, log in "
+                          "with the Claude Code CLI, or use ollama/… models[/]\n")
         while True:
             try:
                 line = self.session.prompt(

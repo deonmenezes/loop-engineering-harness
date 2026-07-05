@@ -69,7 +69,26 @@ class Provider:
 class AnthropicProvider(Provider):
     def __init__(self):
         import anthropic
-        self.client = anthropic.Anthropic()
+
+        from ..core import auth
+        base = os.environ.get("ANTHROPIC_BASE_URL")
+        mode, secret, self.source = auth.discover_anthropic()
+        kw = {}
+        if base:
+            kw["base_url"] = base
+        if mode == "oauth":
+            # SDK sends Authorization: Bearer <token> when auth_token is set;
+            # the oauth beta header opts the request into token auth.
+            kw["auth_token"] = secret
+            kw["default_headers"] = {"anthropic-beta": "oauth-2025-04-20"}
+        elif mode == "api_key":
+            kw["api_key"] = secret
+        elif not base:
+            raise RuntimeError(
+                "no Anthropic auth found — set ANTHROPIC_API_KEY, run "
+                "`claude setup-token` for an OAuth token, log in with the "
+                "Claude Code CLI, or set ANTHROPIC_BASE_URL for a gateway")
+        self.client = anthropic.Anthropic(**kw)
 
     def chat(self, *, model, system, messages, tools=None, max_tokens=4096) -> ChatResponse:
         kwargs = dict(model=model, system=system, messages=messages, max_tokens=max_tokens)
@@ -121,8 +140,16 @@ class AnthropicProvider(Provider):
 class OpenAICompatProvider(Provider):
     def __init__(self, api_key_env: str, base_url: str | None = None):
         from openai import OpenAI
-        key = os.environ.get(api_key_env, "ollama")  # ollama needs any non-empty key
-        self.client = OpenAI(api_key=key, base_url=base_url)
+
+        from ..core import auth
+        provider = {"OPENAI_API_KEY": "openai", "GROQ_API_KEY": "groq",
+                    "OPENROUTER_API_KEY": "openrouter"}.get(api_key_env)
+        if provider:
+            key, self.source = auth.discover_key(provider)
+            key = key or os.environ.get(api_key_env)
+        else:  # ollama — any non-empty key works
+            key, self.source = os.environ.get(api_key_env, "ollama"), "local"
+        self.client = OpenAI(api_key=key or "ollama", base_url=base_url)
 
     def chat(self, *, model, system, messages, tools=None, max_tokens=4096) -> ChatResponse:
         import json
