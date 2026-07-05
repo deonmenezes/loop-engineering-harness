@@ -78,8 +78,18 @@ class Shell:
         self.session = PromptSession(
             history=FileHistory(str(histfile)),
             completer=self._completer(),
-            style=Style.from_dict({"prompt": "bold ansired"}),
+            style=Style.from_dict({
+                "prompt": "bold ansired",
+                # pi/Claude-Code-style double rules framing the input
+                "rule": "fg:#6a6a6a",
+                "rprompt": "noreverse fg:#6a6a6a bg:default",
+                "bottom-toolbar": "noreverse fg:#6a6a6a bg:default",
+            }),
         )
+
+    def _rule(self) -> str:
+        w = min(shutil.get_terminal_size((80, 24)).columns, 100)
+        return "═" * max(w - 4, 8)
 
     # ------------------------------------------------------------- infra
     def _completer(self):
@@ -320,8 +330,10 @@ class Shell:
         while True:
             try:
                 line = self.session.prompt(
-                    [("class:prompt", "❯ ")],
-                    bottom_toolbar=lambda: f" {self._status()} ").strip()
+                    [("class:rule", "  " + self._rule()), ("", "\n"),
+                     ("class:prompt", "❯ ")],
+                    rprompt=lambda: self._status(),
+                    bottom_toolbar=lambda: "  " + self._rule()).strip()
             except (KeyboardInterrupt, EOFError):
                 console.print("[dim]bye[/]")
                 return
