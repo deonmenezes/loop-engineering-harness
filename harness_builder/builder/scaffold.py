@@ -2481,6 +2481,58 @@ def missing_keys() -> list[str]:
 # collapsed tool messages (ctrl+o expands), slash-command autocomplete.
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
+# ── ASCII-art banner (this harness's name in block letters, accent-tinted) ──
+# Pure stdlib mini-figlet; kept in sync with harness_builder/builder/banner.py.
+_BANNER_FONT = {
+    " ": ["  ", "  ", "  ", "  ", "  "],
+    "a": [" ██ ", "█  █", "████", "█  █", "█  █"],
+    "b": ["███ ", "█  █", "███ ", "█  █", "███ "],
+    "c": [" ███", "█   ", "█   ", "█   ", " ███"],
+    "d": ["███ ", "█  █", "█  █", "█  █", "███ "],
+    "e": ["████", "█   ", "███ ", "█   ", "████"],
+    "f": ["████", "█   ", "███ ", "█   ", "█   "],
+    "g": [" ███", "█   ", "█ ██", "█  █", " ███"],
+    "h": ["█  █", "█  █", "████", "█  █", "█  █"],
+    "i": ["███", " █ ", " █ ", " █ ", "███"],
+    "j": ["  ██", "   █", "   █", "█  █", " ██ "],
+    "k": ["█  █", "█ █ ", "██  ", "█ █ ", "█  █"],
+    "l": ["█   ", "█   ", "█   ", "█   ", "████"],
+    "m": ["█   █", "██ ██", "█ █ █", "█   █", "█   █"],
+    "n": ["█  █", "██ █", "█ ██", "█  █", "█  █"],
+    "o": [" ██ ", "█  █", "█  █", "█  █", " ██ "],
+    "p": ["███ ", "█  █", "███ ", "█   ", "█   "],
+    "q": [" ██ ", "█  █", "█  █", "█ ██", " ███"],
+    "r": ["███ ", "█  █", "███ ", "█ █ ", "█  █"],
+    "s": [" ███", "█   ", " ██ ", "   █", "███ "],
+    "t": ["█████", "  █  ", "  █  ", "  █  ", "  █  "],
+    "u": ["█  █", "█  █", "█  █", "█  █", " ██ "],
+    "v": ["█   █", "█   █", "█   █", " █ █ ", "  █  "],
+    "w": ["█   █", "█   █", "█ █ █", "██ ██", "█   █"],
+    "x": ["█   █", " █ █ ", "  █  ", " █ █ ", "█   █"],
+    "y": ["█   █", " █ █ ", "  █  ", "  █  ", "  █  "],
+    "z": ["████", "  █ ", " █  ", "█   ", "████"],
+    "0": [" ██ ", "█  █", "█  █", "█  █", " ██ "],
+    "1": [" █ ", "██ ", " █ ", " █ ", "███"],
+    "2": ["██ ", "  █", " █ ", "█  ", "███"],
+    "3": ["██ ", "  █", " █ ", "  █", "██ "],
+    "4": ["█  █", "█  █", "████", "   █", "   █"],
+    "5": ["████", "█   ", "███ ", "   █", "███ "],
+    "6": [" ██ ", "█   ", "███ ", "█  █", " ██ "],
+    "7": ["████", "   █", "  █ ", " █  ", "█   "],
+    "8": [" ██ ", "█  █", " ██ ", "█  █", " ██ "],
+    "9": [" ██ ", "█  █", " ███", "   █", " ██ "],
+    "-": ["    ", "    ", "████", "    ", "    "],
+    "_": ["    ", "    ", "    ", "    ", "████"],
+}
+
+
+def big_banner(text):
+    glyphs = [_BANNER_FONT[c] for c in text.lower() if c in _BANNER_FONT]
+    if not glyphs:
+        return []
+    return ["  ".join(g[r] for g in glyphs) for r in range(5)]
+
+
 SLASH_COMMANDS = [
     ("/help", "commands and keys"),
     ("/agents", "the team: who runs, on what model, with which tools"),
@@ -3275,6 +3327,11 @@ class PiTUI:
 
     def startup_lines(self, width: int) -> list[str]:
         lines = [""]
+        art = big_banner(COMMAND)
+        if art and max(len(r) for r in art) <= width - 4:
+            for r in art:
+                lines.append("  " + S.accent_bold.render(r))
+            lines.append("")
         desc = textwrap.shorten(CFG["description"], 220)
         for seg in textwrap.wrap(desc, width - 4):
             lines.append("  " + S.muted_italic.render(seg))
@@ -3923,7 +3980,16 @@ harness upgrade every segment toward this target, round after round.
 
 LAUNCHER = """\
 #!/usr/bin/env bash
-exec python3 "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/app.py" "$@"
+# Resolve symlinks portably (macOS BSD readlink has no -f) so the launcher
+# finds app.py whether run in place or via a ~/.local/bin symlink.
+src="${BASH_SOURCE[0]:-$0}"
+while [ -h "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src";; esac
+done
+dir="$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+exec python3 "$dir/app.py" "$@"
 """
 
 INSTALL_SH = """\
@@ -3960,8 +4026,9 @@ data.setdefault("harnesses", {})[cfg["name"]] = {
 reg.write_text(json.dumps(data, indent=1))
 PYEOF
 case ":$PATH:" in
-  *":$BIN:"*) ;;
-  *) echo "note: add ~/.local/bin to your PATH:"
+  *":$BIN:"*) echo "done — run it from anywhere:  {{COMMAND}}" ;;
+  *) echo "note: add ~/.local/bin to your PATH, then run '{{COMMAND}}':"
+     echo '  echo '"'"'export PATH="$HOME/.local/bin:$PATH"'"'"' >> ~/.zshrc'
      echo '  export PATH="$HOME/.local/bin:$PATH"' ;;
 esac
 """

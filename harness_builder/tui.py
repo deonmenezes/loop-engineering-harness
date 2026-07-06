@@ -286,16 +286,29 @@ class Shell:
             harness_dir = build_harness(prompt, **kwargs)
         self._activate(harness_dir)
         self._refresh_completer()
+        self._show_banner(self.spec.command or harness_dir.name,
+                          self.spec.accent)
         console.print(Panel(
             f"[bold]{harness_dir.name}[/] is a standalone app — it runs "
             f"without harness-builder:\n\n"
-            f"  cd {harness_dir} && ./{harness_dir.name}\n\n"
+            f"  cd {harness_dir} && ./{self.spec.command or harness_dir.name}\n\n"
             f"[dim]prompts/ANATOMY.md maps every {{{{slot}}}} · edit "
             f"prompts/*.md + skills/*.md freely · /prompts inside its TUI "
             f"shows the anatomy[/]",
             title="standalone harness created", border_style="green"))
         self.do_certify("")
         return harness_dir
+
+    def _show_banner(self, text: str, accent: str = ""):
+        from .builder.banner import big_banner
+        rows = big_banner(text)
+        if not rows:
+            return
+        color = accent if accent and accent.startswith("#") else ACCENT
+        console.print()
+        for r in rows:
+            console.print(f"  [bold {color}]{r}[/]")
+        console.print()
 
     def do_certify(self, _):
         """Birth certificate: one smoke run + judge against the harness's
