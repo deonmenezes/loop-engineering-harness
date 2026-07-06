@@ -39,6 +39,7 @@ class Orchestrator:
         from ..core.rag import RagStore
         self.rag = RagStore(self.harness_dir)
         self.mcp_pool = None
+        self.on_token = None      # optional (agent_name, delta) stream callback
         if spec.mcp_servers:
             from ..mcp.client import MCPPool
             self.mcp_pool = MCPPool(spec.mcp_servers, base_dir=self.harness_dir)
@@ -56,20 +57,25 @@ class Orchestrator:
                                 pattern=self.spec.pattern,
                                 guardrails=self.spec.guardrails)
 
-    def _run_one(self, agent_name: str, task: str) -> str:
+    def _run_one(self, agent_name: str, task: str, stream: bool = True) -> str:
         agent = self.spec.agent(agent_name)
         system = self._assemble(agent, task)
         print(f"  ▶ {agent_name} [{agent.model}]")
+        on_token = None
+        if self.on_token and stream:
+            on_token = lambda t, _n=agent_name: self.on_token(_n, t)
         res = run_agent(agent_spec=agent, system=system, task=task,
                         ctx=self._ctx(), guardrails=self.spec.guardrails,
-                        trace=self.trace, token_budget_used=self.tokens_used)
+                        trace=self.trace, token_budget_used=self.tokens_used,
+                        on_token=on_token)
         self.tokens_used += res.input_tokens + res.output_tokens
         print(f"  ✔ {agent_name} ({res.turns} turns, {res.tool_calls} tool calls, "
               f"stopped: {res.stopped_by})")
         return res.reply
 
     # ------------------------------------------------------------------
-    def run(self, task: str) -> str:
+    def run(self, task: str, on_token=None) -> str:
+        self.on_token = on_token
         self.trace.log("run_start", harness=self.spec.name,
                        pattern=self.spec.pattern, task=task)
         handler = getattr(self, f"_pattern_{self.spec.pattern}")
@@ -100,7 +106,10 @@ class Orchestrator:
         names = self.flow_or_all()
         workers, merger = names[:-1], names[-1]
         with ThreadPoolExecutor(max_workers=min(4, len(workers))) as pool:
-            futures = {n: pool.submit(self._run_one, n, task) for n in workers}
+            # parallel workers don't stream (interleaved tokens are noise);
+            # the merger, which produces the deliverable, does
+            futures = {n: pool.submit(self._run_one, n, task, False)
+                       for n in workers}
             results = {n: f.result() for n, f in futures.items()}
         merged_input = "\n\n".join(
             f"=== FINDINGS FROM {n.upper()} ===\n{r}" for n, r in results.items())
@@ -112,9 +121,8 @@ class Orchestrator:
         experts = [a for a in self.spec.agents]
         roster = "\n".join(f"- {a.name}: {a.role}" for a in experts)
         from ..providers import api
-        provider, model = api.resolve(self.spec.agents[0].model)
-        resp = provider.chat(
-            model=model,
+        resp = api.chat_simple(
+            self.spec.agents[0].model,
             system="You are a router. Given a task and an expert roster, reply "
                    "ONLY with a comma-separated list of 1-3 expert names best "
                    "suited to handle it. No prose.",
@@ -194,9 +202,13 @@ class Orchestrator:
                        "`delegate` for specialist work, then integrate results "
                        "into the final deliverable yourself.")
             print(f"  ▶ {name} [{agent.model}] (supervisor, depth {depth})")
+            on_token = None
+            if self.on_token:
+                on_token = lambda t, _n=name: self.on_token(_n, t)
             res = run_agent(agent_spec=agent, system=system, task=task,
                             ctx=self._ctx(), guardrails=self.spec.guardrails,
-                            trace=self.trace, token_budget_used=self.tokens_used)
+                            trace=self.trace, token_budget_used=self.tokens_used,
+                            on_token=on_token)
             self.tokens_used += res.input_tokens + res.output_tokens
             return res.reply
         finally:

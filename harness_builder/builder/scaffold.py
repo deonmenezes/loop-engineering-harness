@@ -886,18 +886,230 @@ class OpenAICompat:
         return messages
 
 
+def codex_default_model() -> str:
+    try:
+        cfg = Path("~/.codex/config.toml").expanduser().read_text()
+        m = re.search(r'^model\s*=\s*"([^"]+)"', cfg, re.M)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return "gpt-5.5"
+
+
+class Codex:
+    """ChatGPT-login OAuth backend used by the Codex CLI — NOT the OpenAI
+    API: different host, Responses dialect over SSE. Reuses ~/.codex/auth.json
+    (`codex login`) and refreshes the token in place on 401. The backend
+    delivers items via response.output_item.done events; response.completed's
+    output array arrives empty, so items are accumulated off the stream."""
+
+    URL = "https://chatgpt.com/backend-api/codex/responses"
+    CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+    AUTH = Path("~/.codex/auth.json").expanduser()
+
+    def __init__(self):
+        toks = (_read_json(self.AUTH) or {}).get("tokens") or {}
+        self.tokens = toks
+        self.source = "Codex CLI (ChatGPT login)"
+        if not (toks.get("access_token") and toks.get("account_id")):
+            raise RuntimeError("no Codex login found — run `codex login`, or "
+                               "use openai/… models with OPENAI_API_KEY")
+
+    def _headers(self):
+        import uuid
+        return {"Authorization": f"Bearer {self.tokens['access_token']}",
+                "chatgpt-account-id": self.tokens["account_id"],
+                "OpenAI-Beta": "responses=experimental",
+                "originator": "codex_cli_rs",
+                "session_id": str(uuid.uuid4())}
+
+    def _refresh(self) -> bool:
+        if not self.tokens.get("refresh_token"):
+            return False
+        try:
+            new = _post("https://auth.openai.com/oauth/token", {}, {
+                "client_id": self.CLIENT_ID, "grant_type": "refresh_token",
+                "refresh_token": self.tokens["refresh_token"],
+                "scope": "openid profile email"}, timeout=30)
+        except Exception:
+            return False
+        for k in ("access_token", "id_token", "refresh_token"):
+            if new.get(k):
+                self.tokens[k] = new[k]
+        try:
+            disk = _read_json(self.AUTH) or {}
+            disk.setdefault("tokens", {}).update(
+                {k: self.tokens[k]
+                 for k in ("access_token", "id_token", "refresh_token")
+                 if self.tokens.get(k)})
+            disk["last_refresh"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ")
+            self.AUTH.write_text(json.dumps(disk, indent=2))
+        except OSError:
+            pass
+        return True
+
+    def _to_input(self, messages):
+        items = []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            if "_codex_items" in m:
+                items.extend(m["_codex_items"])
+            elif "type" in m:               # already a Responses item
+                items.append(m)
+            else:
+                role = m.get("role", "user")
+                kind = "output_text" if role == "assistant" else "input_text"
+                items.append({"type": "message", "role": role,
+                              "content": [{"type": kind,
+                                           "text": str(m.get("content", ""))}]})
+        return items
+
+    def _once(self, body, on_delta):
+        items, usage = [], {}
+        for ev in _post_stream(self.URL, self._headers(), body, timeout=600):
+            t = ev.get("type")
+            if t == "response.output_text.delta" and on_delta:
+                on_delta(ev.get("delta", ""))
+            elif t == "response.output_item.done":
+                items.append(ev.get("item") or {})
+            elif t == "response.completed":
+                usage = (ev.get("response") or {}).get("usage") or {}
+                break
+            elif t in ("response.failed", "error"):
+                err = (ev.get("response", {}) or {}).get("error") \
+                    or ev.get("error") or {}
+                raise RuntimeError("codex backend error: "
+                                   + str(err.get("message") or err)[:300])
+        return items, usage
+
+    def chat(self, model, system, messages, tools=None, max_tokens=8000,
+             on_delta=None):
+        body = {"model": model or codex_default_model(),
+                "instructions": system, "input": self._to_input(messages),
+                "tools": [{"type": "function", "name": t["name"],
+                           "description": t["description"],
+                           "parameters": t["parameters"], "strict": False}
+                          for t in (tools or [])],
+                "tool_choice": "auto", "parallel_tool_calls": False,
+                "store": False, "include": ["reasoning.encrypted_content"],
+                "reasoning": {"effort": os.environ.get(
+                    "CODEX_REASONING_EFFORT", "medium")}}
+        items = usage = None
+        for attempt in range(3):
+            try:
+                items, usage = self._once(body, on_delta)
+                break
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode(errors="replace")[:300]
+                if e.code == 401 and attempt == 0 and self._refresh():
+                    continue
+                if e.code in (429, 500, 502, 503, 529) and attempt < 2:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                raise RuntimeError(
+                    f"HTTP {e.code} from {self.URL}: {detail}") from None
+        if items is None:
+            raise RuntimeError(f"HTTP 429 from {self.URL}: retries exhausted")
+
+        text_parts, calls, raw_items = [], [], []
+        for item in items:
+            t = item.get("type")
+            if t == "message":
+                raw_items.append(item)
+                text_parts += [c.get("text", "")
+                               for c in item.get("content", [])
+                               if c.get("type") == "output_text"]
+            elif t == "function_call":
+                raw_items.append(item)
+                try:
+                    args = json.loads(item.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                calls.append({"id": item.get("call_id") or item.get("id"),
+                              "name": item["name"], "input": args})
+            elif t == "reasoning":     # must be replayed with store=false
+                raw_items.append(item)
+        return Reply("".join(text_parts), calls,
+                     "tool_use" if calls else "end",
+                     usage.get("input_tokens", 0),
+                     usage.get("output_tokens", 0),
+                     {"role": "assistant", "_codex_items": raw_items})
+
+    def tool_results(self, results):
+        return [{"type": "function_call_output", "call_id": r["id"],
+                 "output": r["content"]} for r in results]
+
+    def prune(self, messages, keep=4):
+        idxs = [i for i, m in enumerate(messages)
+                if isinstance(m, dict)
+                and m.get("type") == "function_call_output"]
+        for i in (idxs[:-keep] if len(idxs) > keep else []):
+            messages[i] = {**messages[i],
+                           "output": "(older tool output pruned to save context)"}
+        return messages
+
+
 _providers: dict[str, object] = {}
 
 
 def resolve(model_string: str):
     provider, _, model = model_string.partition("/")
-    if provider not in ("anthropic", "openai", "groq", "openrouter", "ollama"):
+    if provider not in ("anthropic", "codex", "openai", "groq", "openrouter",
+                        "ollama"):
         raise RuntimeError(f"unknown provider '{provider}' in '{model_string}' "
-                           "(anthropic/ openai/ groq/ openrouter/ ollama/)")
+                           "(anthropic/ codex/ openai/ groq/ openrouter/ ollama/)")
     if provider not in _providers:
         _providers[provider] = (Anthropic() if provider == "anthropic"
+                                else Codex() if provider == "codex"
                                 else OpenAICompat(provider))
     return _providers[provider], model
+
+
+# ─────────────────────────── cross-provider fallback (rate-limit survival)
+# When one login's rate limit is exhausted even after retries, the run hops
+# to another detected login (anthropic <-> codex) instead of dying.
+_COOLDOWN: dict[str, float] = {}
+FALLBACK_COOLDOWN = 180.0
+
+
+def _login_available(prefix: str) -> bool:
+    if prefix == "anthropic":
+        return bool(discover_anthropic()[0])
+    if prefix == "codex":
+        toks = (_read_json("~/.codex/auth.json") or {}).get("tokens") or {}
+        return bool(toks.get("access_token") and toks.get("account_id"))
+    if prefix in ("openai", "groq", "openrouter"):
+        return bool(discover_key(prefix)[0])
+    return False
+
+
+def mark_rate_limited(model_string: str):
+    _COOLDOWN[model_string.partition("/")[0]] = time.time() + FALLBACK_COOLDOWN
+
+
+def fallback_for(model_string: str):
+    prefix = model_string.partition("/")[0]
+
+    def usable(p):
+        return (p != prefix and _COOLDOWN.get(p, 0) <= time.time()
+                and _login_available(p))
+
+    if usable("codex"):
+        return "codex/" + codex_default_model()
+    if usable("anthropic"):
+        return "anthropic/claude-sonnet-4-6"
+    return None
+
+
+def effective_model(model_string: str) -> str:
+    if _COOLDOWN.get(model_string.partition("/")[0], 0) > time.time():
+        fb = fallback_for(model_string)
+        if fb:
+            return fb
+    return model_string
 
 
 # ───────────────────────────────────────────────────────── MCP (client side)
@@ -1554,7 +1766,8 @@ class Run:
 
 def run_agent(run: Run, agent: dict, task: str, system_suffix: str = "") -> str:
     g = CFG["guardrails"]
-    provider, model = resolve(model_for(agent))
+    model_string = effective_model(model_for(agent))
+    provider, model = resolve(model_string)
     if any(t.startswith("mcp:") for t in agent["tools"]):
         ensure_mcp()
     known = [t for t in agent["tools"] if t in TOOLS]
@@ -1582,8 +1795,25 @@ def run_agent(run: Run, agent: dict, task: str, system_suffix: str = "") -> str:
         BUS.post("stream_start", agent=agent["name"])
         on_delta = lambda chunk: BUS.post("text_delta", agent=agent["name"],
                                           text=chunk)
-        reply = provider.chat(model, system, messages, schemas,
-                              on_delta=on_delta)
+        try:
+            reply = provider.chat(model, system, messages, schemas,
+                                  on_delta=on_delta)
+        except RuntimeError as e:
+            if "HTTP 429" not in str(e):
+                raise
+            mark_rate_limited(model_string)
+            fb = fallback_for(model_string)
+            if not fb:
+                raise
+            # dialects differ across providers, so the agent's conversation
+            # restarts from scratch on the other login
+            BUS.post("note", text=f"⇄ {model_string} rate-limited — "
+                                  f"restarting {agent['name']} on {fb}")
+            model_string = fb
+            provider, model = resolve(fb)
+            messages = [{"role": "user", "content": task}]
+            reply = provider.chat(model, system, messages, schemas,
+                                  on_delta=on_delta)
         BUS.post("stream_end", agent=agent["name"], text=reply.text)
         run.add_tokens(reply.in_tok, reply.out_tok)
         turns = turn + 1
@@ -2222,6 +2452,10 @@ def auth_status() -> dict[str, tuple[bool, str]]:
             mode, _, src = discover_anthropic()
             status[p] = (bool(mode), (f"{src} ({mode})" if mode else
                          "set ANTHROPIC_API_KEY or run `claude setup-token`"))
+        elif p == "codex":
+            status[p] = (_login_available("codex"),
+                         "Codex CLI (ChatGPT login)" if _login_available("codex")
+                         else "run `codex login`")
         elif p in ("openai", "groq", "openrouter"):
             key, src = discover_key(p)
             env = {"openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY",
@@ -3705,6 +3939,26 @@ if command -v {{COMMAND}} >/dev/null 2>&1 \\
 fi
 ln -sf "$HERE/{{COMMAND}}" "$BIN/{{COMMAND}}"
 echo "installed: {{COMMAND}} -> $BIN/{{COMMAND}}"
+# register in ~/.harness/registry.json so the builder finds it from anywhere
+python3 - "$HERE" <<'PYEOF' 2>/dev/null || true
+import json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+here = Path(sys.argv[1])
+cfg = json.loads((here / "harness.json").read_text())
+reg = Path.home() / ".harness" / "registry.json"
+reg.parent.mkdir(exist_ok=True)
+try:
+    data = json.loads(reg.read_text())
+except Exception:
+    data = {}
+data.setdefault("harnesses", {})[cfg["name"]] = {
+    "path": str(here), "command": cfg.get("command") or cfg["name"],
+    "pattern": cfg.get("pattern", ""),
+    "description": " ".join(cfg.get("description", "").split())[:200],
+    "registered": datetime.now(timezone.utc).isoformat()}
+reg.write_text(json.dumps(data, indent=1))
+PYEOF
 case ":$PATH:" in
   *":$BIN:"*) ;;
   *) echo "note: add ~/.local/bin to your PATH:"
@@ -3765,6 +4019,13 @@ def scaffold(spec, harness_dir: str | Path) -> Path:
                  "step_verify": spec.loop.step_verify},
         "mcp_servers": spec.mcp_servers,
     }, indent=1))
+
+    try:   # global registry: `harness` finds this from any directory
+        from ..core.registry import register
+        register(spec.name, d, command=command, pattern=spec.pattern,
+                 description=desc)
+    except Exception:
+        pass
 
     if not (d / "mcp.json.example").exists():
         (d / "mcp.json.example").write_text(MCP_EXAMPLE)

@@ -52,3 +52,17 @@ class Trace:
               f"tokens={health['in_tokens']}+{health['out_tokens']} "
               f"wall={health['wall_seconds']}s")
         print(f"[trace] {self.path}")
+
+
+def record_score(harness: str, *, score, passed: bool, kind: str,
+                 note: str = "", root: Path | None = None):
+    """Append one gate verdict to the central ledger (traces/scores.jsonl).
+    kind: 'birth' (post-build verification) | 'loop' (eval-gated run).
+    This is what /scorecard aggregates — quality over time, per harness."""
+    root = root or Path("traces")
+    root.mkdir(exist_ok=True)
+    with open(root / "scores.jsonl", "a") as f:
+        f.write(json.dumps({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "harness": harness, "score": score, "passed": passed,
+            "kind": kind, "note": note[:300]}) + "\n")

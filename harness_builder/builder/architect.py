@@ -212,11 +212,10 @@ def compile_prd(prd: str, *,
     four loops), so feeding it to build_harness() gives the design/critique
     loop far more signal than a one-line prompt.
     """
-    provider, m = api.resolve(model)
     system = PRD_COMPILER_SYSTEM.format(tool_names=", ".join(sorted(REGISTRY)))
-    resp = provider.chat(model=m, system=system,
-                         messages=[{"role": "user", "content": prd[:60000]}],
-                         max_tokens=2500)
+    resp = api.chat_simple(model, system=system,
+                           messages=[{"role": "user", "content": prd[:60000]}],
+                           max_tokens=2500)
     return resp.text.strip()
 
 
@@ -229,9 +228,9 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def _design(provider, model, system, messages, max_tokens=8000) -> dict:
-    resp = provider.chat(model=model, system=system, messages=messages,
-                         max_tokens=max_tokens)
+def _design(model_string, system, messages, max_tokens=8000) -> dict:
+    resp = api.chat_simple(model_string, system=system, messages=messages,
+                           max_tokens=max_tokens)
     text = _extract_json(resp.text)
     try:
         return json.loads(text)
@@ -241,10 +240,10 @@ def _design(provider, model, system, messages, max_tokens=8000) -> dict:
                          f"saved to architect_failed.json") from e
 
 
-def _critique(provider, model, prompt, playbook, design) -> tuple[float, str, list]:
+def _critique(model_string, prompt, playbook, design) -> tuple[float, str, list]:
     try:
-        resp = provider.chat(
-            model=model, system=CRITIC_SYSTEM,
+        resp = api.chat_simple(
+            model_string, system=CRITIC_SYSTEM,
             messages=[{"role": "user", "content":
                        f"USER REQUEST:\n{prompt}\n\nPLAYBOOK:\n{playbook}\n\n"
                        f"PROPOSED DESIGN:\n{json.dumps(design, indent=1)[:9000]}"}],
@@ -261,7 +260,7 @@ def build_harness(prompt: str, *, output_root: str = "harnesses",
                   default_model: str = "anthropic/claude-sonnet-4-6",
                   cheap_model: str = "anthropic/claude-haiku-4-5-20251001",
                   refine_rounds: int = 2, pass_threshold: float = 8.0) -> Path:
-    provider, model = api.resolve(architect_model)
+    api.resolve(architect_model)   # fail fast on unknown provider/no auth
     playbook, domains = playbooks.guidance_for(prompt)
     system = ARCHITECT_SYSTEM.format(
         default_model=default_model, cheap_model=cheap_model,
@@ -270,11 +269,11 @@ def build_harness(prompt: str, *, output_root: str = "harnesses",
     print(f"[architect] domain: {', '.join(domains)}  "
           f"(designing with {architect_model})")
     messages = [{"role": "user", "content": prompt}]
-    design = _design(provider, model, system, messages)
+    design = _design(architect_model, system, messages)
 
     # design -> critique -> revise, until it clears the bar or we run out of rounds
     for rnd in range(1, refine_rounds + 1):
-        score, verdict, fixes = _critique(provider, model, prompt, playbook,
+        score, verdict, fixes = _critique(architect_model, prompt, playbook,
                                           design)
         print(f"[architect] design critique (round {rnd}): {score:.1f}/10 — "
               f"{verdict}")
@@ -291,7 +290,7 @@ def build_harness(prompt: str, *, output_root: str = "harnesses",
              "point below, then output the COMPLETE improved JSON (same schema, "
              "no prose):\n" + "\n".join(f"- {f}" for f in fixes)},
         ]
-        design = _design(provider, model, system, messages)
+        design = _design(architect_model, system, messages)
 
     skills_bodies = design.pop("skills", {})
     criteria = design.pop("quality_criteria", [])

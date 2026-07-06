@@ -27,8 +27,10 @@ class RunResult:
 
 
 def run_agent(*, agent_spec, system: str, task: str, ctx: toolreg.ToolContext,
-              guardrails, trace=None, token_budget_used: int = 0) -> RunResult:
-    provider, model = api.resolve(agent_spec.model)
+              guardrails, trace=None, token_budget_used: int = 0,
+              on_token=None) -> RunResult:
+    model_string = api.effective_model(agent_spec.model)
+    provider, model = api.resolve(model_string)
     builtin = [t for t in agent_spec.tools if not t.startswith("mcp:")]
     tool_schemas = toolreg.schemas_for(builtin) if builtin else []
     if ctx.mcp_pool is not None:
@@ -50,8 +52,26 @@ def run_agent(*, agent_spec, system: str, task: str, ctx: toolreg.ToolContext,
 
         # context management: old tool outputs are stale ballast — prune them
         messages = provider.prune_tool_results(messages, keep_last=4)
-        resp = provider.chat(model=model, system=system, messages=messages,
-                             tools=tool_schemas)
+        try:
+            resp = provider.chat(model=model, system=system, messages=messages,
+                                 tools=tool_schemas, on_token=on_token)
+        except Exception as e:
+            if getattr(e, "status_code", None) != 429:
+                raise
+            api.mark_rate_limited(model_string)
+            fb = api.fallback_for(model_string)
+            if not fb:
+                raise
+            # message history is provider-dialect; restart the agent's
+            # conversation from scratch on the other login (same recovery a
+            # human would do — workspace writes so far simply get redone)
+            print(f"  ⇄ {model_string} rate-limited — restarting "
+                  f"{agent_spec.name} on {fb}")
+            model_string = fb
+            provider, model = api.resolve(fb)
+            messages = [{"role": "user", "content": task}]
+            resp = provider.chat(model=model, system=system, messages=messages,
+                                 tools=tool_schemas, on_token=on_token)
         result.turns = turn + 1
         result.input_tokens += resp.input_tokens
         result.output_tokens += resp.output_tokens

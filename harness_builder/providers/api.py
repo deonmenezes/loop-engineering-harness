@@ -82,10 +82,12 @@ class ChatResponse:
 
 
 class Provider:
-    """Interface every provider implements."""
+    """Interface every provider implements. on_token, when given, receives
+    text deltas as they stream (providers without streaming may ignore it)."""
 
     def chat(self, *, model: str, system: str, messages: list,
-             tools: list[dict] | None = None, max_tokens: int = 4096) -> ChatResponse:
+             tools: list[dict] | None = None, max_tokens: int = 4096,
+             on_token=None) -> ChatResponse:
         raise NotImplementedError
 
     def tool_result_message(self, results: list[dict]) -> dict:
@@ -130,7 +132,14 @@ class AnthropicProvider(Provider):
                 "Claude Code CLI, or set ANTHROPIC_BASE_URL for a gateway")
         self.client = anthropic.Anthropic(**kw)
 
-    def chat(self, *, model, system, messages, tools=None, max_tokens=4096) -> ChatResponse:
+    def _stream_once(self, kwargs: dict, on_token):
+        with self.client.messages.stream(**kwargs) as s:
+            for t in s.text_stream:
+                on_token(t)
+            return s.get_final_message()
+
+    def chat(self, *, model, system, messages, tools=None, max_tokens=4096,
+             on_token=None) -> ChatResponse:
         kwargs = dict(model=model, system=system, messages=messages, max_tokens=max_tokens)
         if tools:
             kwargs["tools"] = [
@@ -138,7 +147,10 @@ class AnthropicProvider(Provider):
                  "input_schema": t["parameters"]}
                 for t in tools
             ]
-        resp = call_with_retries(lambda: self.client.messages.create(**kwargs))
+        if on_token:
+            resp = call_with_retries(lambda: self._stream_once(kwargs, on_token))
+        else:
+            resp = call_with_retries(lambda: self.client.messages.create(**kwargs))
         text = "".join(b.text for b in resp.content if b.type == "text")
         calls = [ToolCall(id=b.id, name=b.name, input=b.input)
                  for b in resp.content if b.type == "tool_use"]
@@ -227,7 +239,7 @@ class CodexProvider(Provider):
                                            "text": str(m.get("content", ""))}]})
         return items
 
-    def _once(self, body: dict) -> dict:
+    def _once(self, body: dict, on_token=None) -> dict:
         import json as _json
 
         import httpx
@@ -253,7 +265,9 @@ class CodexProvider(Provider):
                     except _json.JSONDecodeError:
                         continue
                     etype = ev.get("type")
-                    if etype == "response.output_item.done":
+                    if etype == "response.output_text.delta" and on_token:
+                        on_token(ev.get("delta", ""))
+                    elif etype == "response.output_item.done":
                         items.append(ev.get("item") or {})
                     elif etype == "response.completed":
                         resp = ev.get("response") or {}
@@ -266,18 +280,19 @@ class CodexProvider(Provider):
                         raise CodexError(502, str(err.get("message") or err))
         raise CodexError(502, "stream ended without response.completed")
 
-    def _request(self, body: dict) -> dict:
+    def _request(self, body: dict, on_token=None) -> dict:
         try:
-            return self._once(body)
+            return self._once(body, on_token)
         except CodexError as e:
             if e.status_code == 401:
                 new = self._auth.refresh_codex(self.auth_path)
                 if new:
                     self.tokens = new
-                    return self._once(body)
+                    return self._once(body, on_token)
             raise
 
-    def chat(self, *, model, system, messages, tools=None, max_tokens=4096) -> ChatResponse:
+    def chat(self, *, model, system, messages, tools=None, max_tokens=4096,
+             on_token=None) -> ChatResponse:
         import json as _json
         if not model:
             model = self._auth.codex_default_model()
@@ -297,7 +312,7 @@ class CodexProvider(Provider):
             "reasoning": {"effort": os.environ.get("CODEX_REASONING_EFFORT",
                                                    "medium")},
         }
-        resp = call_with_retries(lambda: self._request(body))
+        resp = call_with_retries(lambda: self._request(body, on_token))
 
         text_parts: list[str] = []
         calls: list[ToolCall] = []
@@ -363,7 +378,9 @@ class OpenAICompatProvider(Provider):
             key, self.source = os.environ.get(api_key_env, "ollama"), "local"
         self.client = OpenAI(api_key=key or "ollama", base_url=base_url)
 
-    def chat(self, *, model, system, messages, tools=None, max_tokens=4096) -> ChatResponse:
+    def chat(self, *, model, system, messages, tools=None, max_tokens=4096,
+             on_token=None) -> ChatResponse:
+        # on_token accepted for interface parity; this path doesn't stream
         import json
         full = [{"role": "system", "content": system}] + messages
         kwargs = dict(model=model, messages=full, max_tokens=max_tokens)
@@ -442,3 +459,67 @@ def resolve(model_string: str) -> tuple[Provider, str]:
         cls, kw = _REGISTRY[prefix]
         _instances[prefix] = cls(**kw)
     return _instances[prefix], model
+
+
+# ---------------------------------------------------------------------------
+# Cross-provider fallback — when one login's rate limit is exhausted even
+# after the retry ladder, finish the work on another detected login
+# (anthropic <-> codex) instead of dying. A provider that 429s out goes into
+# a cooldown window so subsequent calls skip straight to the alternate.
+# ---------------------------------------------------------------------------
+_COOLDOWN: dict[str, float] = {}          # provider prefix -> down-until (unix)
+FALLBACK_COOLDOWN = 180.0
+
+
+def mark_rate_limited(model_string: str):
+    _COOLDOWN[model_string.partition("/")[0]] = time.time() + FALLBACK_COOLDOWN
+
+
+def fallback_for(model_string: str) -> str | None:
+    """An alternate 'provider/model' on a DIFFERENT detected login, if any."""
+    from ..core import auth
+    prefix = model_string.partition("/")[0]
+    avail = auth.available()
+
+    def usable(p: str) -> bool:
+        return (p != prefix and avail.get(p, (False, ""))[0]
+                and _COOLDOWN.get(p, 0) <= time.time())
+
+    if usable("codex"):
+        return "codex/" + auth.codex_default_model()
+    if usable("anthropic"):
+        return "anthropic/claude-sonnet-4-6"
+    return None
+
+
+def effective_model(model_string: str) -> str:
+    """The model to actually run: the requested one, unless its provider is
+    cooling down from a rate limit and another login can take the run."""
+    if _COOLDOWN.get(model_string.partition("/")[0], 0) > time.time():
+        fb = fallback_for(model_string)
+        if fb:
+            print(f"  ⇄ {model_string} cooling down — using {fb}")
+            return fb
+    return model_string
+
+
+def chat_simple(model_string: str, *, system: str, messages: list,
+                max_tokens: int = 4096, on_token=None) -> ChatResponse:
+    """One-shot chat for plain {'role','content'} messages (architect, critic,
+    judge, router, PRD compiler) with automatic cross-provider failover."""
+    ms = effective_model(model_string)
+    provider, model = resolve(ms)
+    try:
+        return provider.chat(model=model, system=system, messages=messages,
+                             max_tokens=max_tokens, on_token=on_token)
+    except Exception as e:
+        if getattr(e, "status_code", None) != 429:
+            raise
+        mark_rate_limited(ms)
+        fb = fallback_for(ms)
+        if not fb:
+            raise
+        print(f"  ⇄ {ms} rate-limited — falling back to {fb}")
+        provider, model = resolve(fb)
+        return provider.chat(model=model, system=system, messages=messages,
+                             max_tokens=max_tokens, on_token=on_token)

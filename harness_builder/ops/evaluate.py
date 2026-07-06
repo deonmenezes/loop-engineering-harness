@@ -21,15 +21,14 @@ Respond ONLY with JSON:
 
 
 def judge(*, spec, task: str, output: str) -> dict:
-    provider, model = api.resolve(spec.eval.judge_model)
     criteria = spec.eval.quality_criteria or [
         "fully addresses the task", "factually careful", "clear and well-structured"]
     prompt = (f"TASK:\n{task}\n\nQUALITY CRITERIA:\n"
               + "\n".join(f"- {c}" for c in criteria)
               + f"\n\nOUTPUT TO JUDGE:\n{output[:20000]}")
-    resp = provider.chat(model=model, system=JUDGE_SYSTEM,
-                         messages=[{"role": "user", "content": prompt}],
-                         max_tokens=1500)
+    resp = api.chat_simple(spec.eval.judge_model, system=JUDGE_SYSTEM,
+                           messages=[{"role": "user", "content": prompt}],
+                           max_tokens=1500)
     try:
         text = re.sub(r"```(json)?|```", "", resp.text).strip()
         data = json.loads(text)

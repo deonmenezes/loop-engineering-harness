@@ -23,6 +23,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
@@ -77,6 +78,11 @@ HELP = """\
 
 [bold]Interop[/]
   /export <target>          compile active harness for: claude-code | codex | opencode
+
+[bold]Quality[/]
+  /certify                  re-run the birth certificate on the active harness
+                            (every /build ends with one automatically)
+  /scorecard                pass-rate + gate scores per harness, over time
 
 [bold]Misc[/]
   /traces                   list recent run traces
@@ -190,6 +196,29 @@ class Shell:
                             title_align="left", border_style="grey37",
                             padding=(0, 1)))
 
+    def _stream_run(self, run_fn, title: str = "reply") -> str:
+        """Run run_fn(on_token) inside a Live panel that streams the current
+        agent's tokens; the panel becomes the final reply. Agent progress
+        lines print above it (Live redirects stdout)."""
+        state = {"agent": "", "text": ""}
+        live = Live(console=console, refresh_per_second=8, transient=False)
+
+        def on_token(agent: str, delta: str):
+            if agent != state["agent"]:
+                state["agent"], state["text"] = agent, ""
+            state["text"] += delta
+            live.update(Panel(
+                Markdown(state["text"][-3000:]),
+                title=f"[{ACCENT}]⏺[/] {agent} [dim]streaming…[/]",
+                title_align="left", border_style="grey37", padding=(0, 1)))
+
+        with live:
+            reply = run_fn(on_token)
+            live.update(Panel(Markdown(reply), title=f"[{ACCENT}]⏺[/] {title}",
+                              title_align="left", border_style="grey37",
+                              padding=(0, 1)))
+        return reply
+
     # ------------------------------------------------------------- infra
     def _completer(self):
         tdir = Path(__file__).resolve().parent.parent / "templates"
@@ -210,6 +239,7 @@ class Shell:
                 "openai/gpt-4o": None, "groq/llama-3.3-70b-versatile": None,
                 "ollama/llama3.1": None},
             "/goal": None, "/verify": None, "/iterations": None,
+            "/certify": None, "/scorecard": None,
             "/export": {t: None for t in EXPORTERS},
             "/traces": None, "/help": None, "/quit": None,
         })
@@ -231,6 +261,13 @@ class Shell:
         if self.model_override:
             for a in self.spec.agents:
                 a.model = self.model_override
+        try:
+            from .core.registry import register
+            register(self.spec.name, self.harness_dir,
+                     command=self.spec.command, pattern=self.spec.pattern,
+                     description=self.spec.description)
+        except Exception:
+            pass
         console.print(f"[green]✓ active:[/] [bold]{self.spec.name}[/] "
                       f"({self.spec.pattern}, {len(self.spec.agents)} agents)")
 
@@ -257,7 +294,37 @@ class Shell:
             f"prompts/*.md + skills/*.md freely · /prompts inside its TUI "
             f"shows the anatomy[/]",
             title="standalone harness created", border_style="green"))
+        self.do_certify("")
         return harness_dir
+
+    def do_certify(self, _):
+        """Birth certificate: one smoke run + judge against the harness's
+        own quality gate; verdict stamped into BIRTH.md."""
+        if not self._need_harness():
+            return
+        from .builder.verify import birth_certificate
+        console.rule("birth certificate — one smoke run through the new team",
+                     style=RULE_GREY)
+        out: dict = {}
+        try:
+            def run(on_token):
+                out.update(birth_certificate(self.spec, self.harness_dir,
+                                             on_token=on_token))
+                return out["reply"]
+            self._stream_run(run, title="smoke deliverable")
+        except Exception as e:
+            console.print(f"[yellow]⚠ verification could not run:[/] "
+                          f"{type(e).__name__}: {e}")
+            console.print("[dim]the harness is built — verify later "
+                          "with /certify[/]")
+            return
+        mark = "[green]PASSED[/]" if out["passed"] else "[red]DID NOT PASS[/]"
+        console.print(f"[{ACCENT}]⏺[/] birth certificate: "
+                      f"[bold]{out['score']:.1f}/10[/] {mark} "
+                      f"[dim](gate {self.spec.eval.pass_threshold} · "
+                      f"stamped into BIRTH.md)[/]")
+        if not out["passed"] and out.get("diagnosis"):
+            console.print(f"[dim]judge: {out['diagnosis'][:300]}[/]")
 
     def do_prd(self, arg: str):
         """PRD -> build brief (architecture + loops) -> confirm -> build."""
@@ -379,18 +446,11 @@ class Shell:
         self._activate(p)
 
     def do_list(self, _):
+        import yaml
+        from .core.registry import entries
+        rows: dict[str, tuple] = {}          # resolved path -> row
         found = sorted(Path("harnesses").glob("*/harness.yaml")) \
             if Path("harnesses").exists() else []
-        if not found:
-            console.print("[dim]no harnesses in ./harnesses yet — /build, /prd, "
-                          "or /use one[/]")
-            return
-        import yaml
-        t = Table(title="harnesses/", border_style="dim")
-        t.add_column("run here", style="bold")
-        t.add_column("launch", style="cyan")
-        t.add_column("pattern")
-        t.add_column("description", style="dim")
         for f in found:
             try:
                 meta = yaml.safe_load(f.read_text()) or {}
@@ -398,12 +458,69 @@ class Shell:
                 meta = {}
             name = f.parent.name
             cmd = meta.get("command") or name
-            t.add_row(f"/{name}", f"./{f.parent}/{cmd}",
-                      meta.get("pattern", "?"),
-                      " ".join((meta.get("description") or "").split())[:110])
+            rows[str(f.parent.resolve())] = (
+                f"/{name}", f"./{f.parent}/{cmd}", meta.get("pattern", "?"),
+                " ".join((meta.get("description") or "").split())[:110])
+        for e in entries():              # fleet-wide, from ~/.harness/registry
+            if e["path"] not in rows:
+                rows[e["path"]] = (
+                    f"[dim]{e['name']}[/]", f"[dim]/open {e['path']}[/]",
+                    e.get("pattern", "?"),
+                    (e.get("description") or "")[:110])
+        if not rows:
+            console.print("[dim]no harnesses yet — /build, /prd, or /use one[/]")
+            return
+        t = Table(title="your harnesses (cwd + global registry)",
+                  border_style="dim")
+        t.add_column("run", style="bold")
+        t.add_column("launch", style="cyan")
+        t.add_column("pattern")
+        t.add_column("description", style="dim")
+        for row in rows.values():
+            t.add_row(*row)
         console.print(t)
-        console.print("[dim]/<name> <task> runs one here · /install <name> "
-                      "puts its command on your PATH[/]")
+        console.print("[dim]/<name> <task> runs a local one · /open <path> "
+                      "activates a global one · /install <name> puts its "
+                      "command on your PATH[/]")
+
+    def do_scorecard(self, _):
+        import json as _json
+        ledger = Path("traces") / "scores.jsonl"
+        if not ledger.exists():
+            console.print("[dim]no scores yet — birth certificates and /loop "
+                          "runs write traces/scores.jsonl[/]")
+            return
+        per: dict[str, dict] = {}
+        for line in ledger.read_text().splitlines():
+            try:
+                r = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            d = per.setdefault(r.get("harness", "?"),
+                               {"n": 0, "passed": 0, "scores": [],
+                                "birth": None, "last": ""})
+            d["n"] += 1
+            d["passed"] += bool(r.get("passed"))
+            if isinstance(r.get("score"), (int, float)):
+                d["scores"].append(float(r["score"]))
+            if r.get("kind") == "birth":
+                d["birth"] = r.get("score")
+            d["last"] = str(r.get("ts", ""))[:16].replace("T", " ")
+        t = Table(title="scorecard — quality-gate verdicts over time",
+                  border_style="dim")
+        for col in ("harness", "runs", "pass rate", "avg score", "birth",
+                    "last gated run"):
+            t.add_column(col, style="bold" if col == "harness" else None)
+        for name, d in sorted(per.items()):
+            rate = f"{100 * d['passed'] // d['n']}%"
+            avg = (f"{sum(d['scores']) / len(d['scores']):.1f}"
+                   if d["scores"] else "—")
+            birth = f"{d['birth']:.1f}" if isinstance(
+                d["birth"], (int, float)) else "—"
+            t.add_row(name, str(d["n"]), rate, avg, birth, d["last"])
+        console.print(t)
+        console.print("[dim]improving a harness? /uploop inside it, then "
+                      "watch this table move[/]")
 
     def do_install(self, name: str):
         if not name:
@@ -488,31 +605,34 @@ class Shell:
             return
         from .runtime.orchestrator import Orchestrator
 
-        def one_run(t: str) -> str:
-            return Orchestrator(self.spec, self.harness_dir).run(t)
-
         console.rule(f"[bold]{self.spec.name}[/] · {self.spec.pattern}"
                      + (" · goal loop" if loop else ""), style=RULE_GREY)
         try:
-            with self._working():
-                if loop:
-                    from .core.ralph import run_goal_loop
+            if loop:
+                from .core.ralph import run_goal_loop
+                res = None
+
+                def looped(on_token):
+                    nonlocal res
                     res = run_goal_loop(
-                        run_harness_fn=one_run, spec=self.spec, task=task,
+                        run_harness_fn=lambda t: Orchestrator(
+                            self.spec, self.harness_dir).run(t, on_token=on_token),
+                        spec=self.spec, task=task,
                         max_iterations=self.max_iterations,
                         verify_cmd=self.verify_cmd,
                         workspace=Path("workspace") / self.spec.name)
-                    reply = res.final_output
-                else:
-                    reply = one_run(task)
+                    return res.final_output
+
+                self._stream_run(looped)
+                verdict = "[green]PASSED[/]" if res.passed \
+                    else "[red]DID NOT PASS[/]"
+                console.rule(f"goal loop {verdict} · {res.iterations} "
+                             "iteration(s)", style=RULE_GREY)
+            else:
+                self._stream_run(lambda on_token: Orchestrator(
+                    self.spec, self.harness_dir).run(task, on_token=on_token))
         except Exception as e:
             console.print(f"[red]✗ run failed:[/] {type(e).__name__}: {e}")
-            return
-        if loop:
-            verdict = "[green]PASSED[/]" if res.passed else "[red]DID NOT PASS[/]"
-            console.rule(f"goal loop {verdict} · {res.iterations} iteration(s)",
-                         style=RULE_GREY)
-        self._reply(Markdown(reply))
 
     def run_goal(self, goal: str):
         if not self._need_harness():

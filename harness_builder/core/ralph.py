@@ -71,6 +71,9 @@ def run_goal_loop(*, run_harness_fn, spec, task: str, max_iterations: int = 3,
 
         if trace:
             trace.log("gate", **verdicts[-1])
+        from ..ops.trace import record_score
+        record_score(spec.name, score=verdicts[-1]["score"], passed=passed,
+                     kind="loop", note=task[:200])
 
         if passed:
             print("  [gate] PASSED -> release")
