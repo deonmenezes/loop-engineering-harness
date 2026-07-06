@@ -29,7 +29,11 @@ from typing import Any
 # ---------------------------------------------------------------------------
 RETRY_STATUS = {429, 500, 502, 503, 529}
 RETRY_NAMES = {"APIConnectionError", "APITimeoutError", "InternalServerError",
-               "OverloadedError"}
+               "OverloadedError",
+               # raw httpx/httpcore transport errors (Codex provider streams
+               # over httpx directly) — "connection reset by peer" & friends
+               "ConnectError", "ConnectTimeout", "ReadError", "ReadTimeout",
+               "WriteError", "PoolTimeout", "RemoteProtocolError"}
 
 
 def _retry_wait(exc: Exception, attempt: int) -> float:

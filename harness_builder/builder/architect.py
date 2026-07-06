@@ -228,7 +228,9 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def _design(model_string, system, messages, max_tokens=8000) -> dict:
+def _design(model_string, system, messages, max_tokens=16000) -> dict:
+    # dense domains (6 agents, deep skills) blow past 8k tokens and truncate
+    # into invalid JSON, so give the design room to be complete
     resp = api.chat_simple(model_string, system=system, messages=messages,
                            max_tokens=max_tokens)
     text = _extract_json(resp.text)
@@ -245,8 +247,10 @@ def _critique(model_string, prompt, playbook, design) -> tuple[float, str, list]
         resp = api.chat_simple(
             model_string, system=CRITIC_SYSTEM,
             messages=[{"role": "user", "content":
+                       # show the critic the WHOLE design — a truncated view
+                       # makes it false-flag complete designs as "truncated"
                        f"USER REQUEST:\n{prompt}\n\nPLAYBOOK:\n{playbook}\n\n"
-                       f"PROPOSED DESIGN:\n{json.dumps(design, indent=1)[:9000]}"}],
+                       f"PROPOSED DESIGN:\n{json.dumps(design, indent=1)[:24000]}"}],
             max_tokens=900)
         data = json.loads(_extract_json(resp.text))
         return (float(data.get("score", 0)), str(data.get("verdict", "")),
@@ -271,13 +275,21 @@ def build_harness(prompt: str, *, output_root: str = "harnesses",
     messages = [{"role": "user", "content": prompt}]
     design = _design(architect_model, system, messages)
 
-    # design -> critique -> revise, until it clears the bar or we run out of rounds
+    # design -> critique -> revise, keeping the BEST-scored candidate. (The
+    # old loop shipped the LAST revision uncritiqued, so a worse final pass
+    # could replace a better earlier one.) A revision that returns invalid
+    # JSON no longer sinks the build — we fall back to the best so far.
+    best_design, best_score = design, -1.0
     for rnd in range(1, refine_rounds + 1):
         score, verdict, fixes = _critique(architect_model, prompt, playbook,
                                           design)
         print(f"[architect] design critique (round {rnd}): {score:.1f}/10 — "
               f"{verdict}")
-        if score >= pass_threshold or not fixes:
+        if score > best_score:
+            best_design, best_score = design, score
+        # last round's revision would never be critiqued (and best-keeping
+        # would discard it) — don't spend a call producing it
+        if score >= pass_threshold or not fixes or rnd == refine_rounds:
             break
         for fx in fixes[:6]:
             print(f"             fix: {fx}")
@@ -290,7 +302,14 @@ def build_harness(prompt: str, *, output_root: str = "harnesses",
              "point below, then output the COMPLETE improved JSON (same schema, "
              "no prose):\n" + "\n".join(f"- {f}" for f in fixes)},
         ]
-        design = _design(architect_model, system, messages)
+        try:
+            design = _design(architect_model, system, messages)
+        except SystemExit as e:
+            print(f"[architect] revision {rnd} unusable ({e}); "
+                  f"keeping best design so far ({best_score:.1f}/10)")
+            break
+    design = best_design
+    print(f"[architect] selected design: {best_score:.1f}/10")
 
     skills_bodies = design.pop("skills", {})
     criteria = design.pop("quality_criteria", [])
@@ -302,12 +321,43 @@ def build_harness(prompt: str, *, output_root: str = "harnesses",
         c for c in (design.get("commands") or [])
         if isinstance(c, dict) and c.get("task")
         and re.fullmatch(r"[a-z][a-z0-9_-]{0,23}", str(c.get("name") or ""))]
+    # for complex domains the architect often expresses flow as a rich stage
+    # graph (list of {stage, agent, requires, stop_if, ...}); normalize it to
+    # the agent-name order the spec+runtime expect, and preserve the full
+    # graph so its gates/requirements aren't lost.
+    stage_graph = [f for f in (design.get("flow") or []) if isinstance(f, dict)]
+    if stage_graph:
+        names = [a.get("name") for a in design.get("agents", [])]
+        norm, seen = [], set()
+        for f in design["flow"]:
+            a = f.get("agent") or f.get("name") if isinstance(f, dict) else f
+            if a in names and a not in seen:
+                norm.append(a)
+                seen.add(a)
+        design["flow"] = norm
     spec = HarnessSpec.from_dict(design)   # validates pattern/flow/supervisor/command
 
     harness_dir = Path(output_root) / spec.name
     spec.save(harness_dir)
     for skill_name, body in skills_bodies.items():
         (harness_dir / "skills" / f"{skill_name}.md").write_text(body)
+    if stage_graph:
+        lines = [f"# {spec.name} — stage graph\n",
+                 "The architect's staged workflow: each stage names the "
+                 "agent, the artifacts it must produce, and the condition "
+                 "that halts the run. The runtime pattern is "
+                 f"`{spec.pattern}`; this graph is the intended operating "
+                 "order and gate set.\n"]
+        for i, s in enumerate(stage_graph, 1):
+            lines.append(f"## {i}. {s.get('stage', '?')} — `{s.get('agent', '?')}`")
+            if s.get("requires"):
+                lines.append(f"- **requires:** {', '.join(map(str, s['requires']))}")
+            if s.get("stop_if"):
+                lines.append(f"- **stop if:** {s['stop_if']}")
+            if s.get("retry_budget") is not None:
+                lines.append(f"- **retry budget:** {s['retry_budget']}")
+            lines.append("")
+        (harness_dir / "STAGES.md").write_text("\n".join(lines))
     from .scaffold import scaffold, derive_command
     scaffold(spec, harness_dir)
 

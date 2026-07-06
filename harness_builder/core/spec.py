@@ -150,7 +150,11 @@ class HarnessSpec:
             if not self.supervisor or self.supervisor not in names:
                 raise ValueError(f"pattern '{self.pattern}' needs a valid 'supervisor' "
                                  f"agent name; got '{self.supervisor}'")
-        flat = [x for item in self.flow
+        # flow entries may be agent-name strings, nested lists (fanout), or
+        # rich stage objects {stage, agent, ...} — normalize to names
+        def _name(x):
+            return (x.get("agent") or x.get("name")) if isinstance(x, dict) else x
+        flat = [_name(x) for item in self.flow
                 for x in (item if isinstance(item, list) else [item])]
         unknown = [x for x in flat if x not in names]
         if unknown:
