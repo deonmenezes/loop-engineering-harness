@@ -2578,7 +2578,8 @@ HELP_MD = """\
 
 **keys**
 - `Enter` send · `Alt+Enter`/`Ctrl+J` newline · `Tab` complete /command
-- `Ctrl+O` expand/collapse tool output · `PgUp`/`PgDn` scroll · `Esc` clear
+- scroll: mouse wheel · `PgUp`/`PgDn` · `Ctrl+↑`/`Ctrl+↓` · `Ctrl+O` tools · `Esc` clear
+- (mouse is captured for the wheel — hold Shift/Option to select text natively)
 - `Up`/`Down` input history · `Ctrl+C` cancel run / quit
 
 **team & tools**
@@ -2735,8 +2736,13 @@ class KeyParser:
            ("1;2", "A"): "pgup", ("1;2", "B"): "pgdn",
            ("5", "~"): "pgup", ("6", "~"): "pgdn", ("3", "~"): "delete",
            ("1", "~"): "home", ("4", "~"): "end", ("7", "~"): "home",
-           ("8", "~"): "end"}
+           ("8", "~"): "end",
+           # Ctrl+Up / Ctrl+Down as scroll (laptops lack a real PgUp/PgDn key)
+           ("1;5", "A"): "pgup", ("1;5", "B"): "pgdn"}
     CSI_RE = re.compile(rb"^\x1b[\[O]([0-9;]*)([A-Za-z~])")
+    # SGR mouse (ESC[<b;x;yM/m) — enabled in the alt screen so the trackpad
+    # wheel scrolls the conversation (native scrollback is off in alt screen)
+    MOUSE_RE = re.compile(rb"^\x1b\[<(\d+);\d+;\d+([Mm])")
 
     def __init__(self):
         self.buf = b""
@@ -2750,6 +2756,15 @@ class KeyParser:
             return None
         b0 = self.buf[0]
         if b0 == 0x1B:
+            mm = self.MOUSE_RE.match(self.buf)
+            if mm:
+                self.buf = self.buf[mm.end():]
+                btn = int(mm.group(1))
+                if btn == 64:
+                    return "wheel_up"
+                if btn == 65:
+                    return "wheel_down"
+                return "unknown"       # clicks/other mouse events: ignore
             m = self.CSI_RE.match(self.buf)
             if m:
                 self.buf = self.buf[m.end():]
@@ -3190,12 +3205,21 @@ class PiTUI:
         if key == "ctrl_o":
             self.tools_expanded = not self.tools_expanded
             return
-        if key == "pgup":
+        if key in ("pgup", "wheel_up"):
             self.follow_tail = False
-            self.y_offset = max(self.y_offset - 10, 0)
+            self.y_offset = max(self.y_offset - (3 if key == "wheel_up" else 10),
+                                0)
             return
-        if key == "pgdn":
-            self.y_offset += 10
+        if key in ("pgdn", "wheel_down"):
+            self.follow_tail = False
+            self.y_offset += 3 if key == "wheel_down" else 10
+            return
+        if key == "home" and self.state != "idle":
+            self.follow_tail = False
+            self.y_offset = 0
+            return
+        if key == "end" and self.state != "idle":
+            self.follow_tail = True
             return
         if key == "esc":
             if self.ac_open:
@@ -3369,7 +3393,7 @@ class PiTUI:
                                    f"{len(CFG['agents'])} agents · {gate})"),
                   "  " + S.muted.render(truncate(
                       "/model: model  /theme: theme  ctrl+o: tools  "
-                      "pgup/pgdn: scroll  /help: commands", width - 2)),
+                      "wheel/pgup/pgdn: scroll  /help: commands", width - 2)),
                   "  " + S.muted.render(truncate(
                       f"resources: {len(CFG['agents'])} agents, "
                       f"{len(list((HERE / 'skills').glob('*.md')))} skills, "
@@ -3460,7 +3484,7 @@ class PiTUI:
             denom = max(total - vp_h, 1)
             pct = min(start * 100 // denom, 100)
             body.append("  " + S.muted.render(
-                f"[{pct}%] pgup/pgdn to scroll"))
+                f"[{pct}%] scroll ↑ — mouse wheel · PgUp/PgDn · Ctrl+↑/↓"))
             body = body[-vp_h:] if len(body) > vp_h else body
         body += [""] * (vp_h - len(body))
 
@@ -3481,7 +3505,9 @@ class PiTUI:
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         tty.setraw(fd)
-        sys.stdout.write("\x1b[?1049h\x1b[?25l")
+        # alt screen + hide cursor + enable SGR mouse so the wheel scrolls
+        # (?1000h button events incl. wheel; ?1006h extended coords)
+        sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h")
         try:
             last_size = term_size()
             self.render(force=True)
@@ -3518,7 +3544,8 @@ class PiTUI:
                     self.render(force=(term_size() != last_size))
         finally:
             BUS.set(None)
-            sys.stdout.write("\x1b[?1049l\x1b[?25h")
+            # disable mouse, restore cursor, leave alt screen
+            sys.stdout.write("\x1b[?1000l\x1b[?1006l\x1b[?1049l\x1b[?25h")
             sys.stdout.flush()
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
@@ -3800,7 +3827,7 @@ output, braille spinner, bordered input editor with autocomplete.
 | `Enter` | send task · `Alt+Enter` / `Ctrl+J` newline |
 | `Tab` | complete a /command (autocomplete dropdown) |
 | `Ctrl+O` | expand / collapse tool output |
-| `PgUp` / `PgDn` | scroll the conversation |
+| mouse wheel / `PgUp` / `PgDn` / `Ctrl+↑` / `Ctrl+↓` | scroll the conversation |
 | `Up` / `Down` | input history |
 | `Ctrl+C` | cancel the running task · press again to quit |
 
