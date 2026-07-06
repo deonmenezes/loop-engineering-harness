@@ -87,6 +87,22 @@ SHORT, memorable, and pronounceable — like `pi`, `claude`, or `youvid` for a \
 YouTube video harness. 3-8 lowercase letters, no underscores. A real CLI name, \
 not a truncation.
 
+# TUI identity
+Pick "accent": a #RRGGBB hex that themes this harness's TUI, derived from the \
+DOMAIN (bakery -> warm caramel, devtools -> electric blue, legal -> deep \
+burgundy). Must read well on a dark terminal background: medium-to-bright \
+saturation, never near-black/near-white. Users can override it later.
+
+# Quick commands
+Define "commands": 2-4 domain slash-commands for the harness TUI — the moves \
+users make constantly in this domain, one keystroke instead of a paragraph. \
+Each: {{"name": "shortword", "description": "one line", "task": "full task \
+template, with {{args}} where the user's arguments drop in"}}. The task text \
+must stand alone as an excellent prompt to the team ("audit {{args}} for \
+WCAG AA contrast and semantic HTML, output a fix list ranked by impact"). \
+Never duplicate built-ins (help/agents/prompts/skills/memory/model/theme/\
+accent/loop/goal/improve).
+
 # Quality criteria
 4-6 crisp, CHECKABLE criteria an LLM judge will score the final output against. \
 Domain-specific and verifiable ("every shot has a model-ready prompt with camera \
@@ -96,6 +112,8 @@ and lighting"; "all changed code has passing tests"), never vague ("high quality
 {{
  "name": "snake_case_harness_name",
  "command": "shortcmd",
+ "accent": "#RRGGBB",
+ "commands": [{{"name": "...", "description": "...", "task": "... {{args}} ..."}}],
  "description": "...",
  "pattern": "...",
  "supervisor": null,
@@ -129,6 +147,77 @@ Reserve 9-10 for designs a domain expert would ship.
 
 Respond with ONLY this JSON: {"score": <float 0-10>, "verdict": "<one line>", \
 "fixes": ["<concrete, actionable fix>", "..."]}"""
+
+PRD_COMPILER_SYSTEM = """You are the PRD COMPILER for a harness factory. Input: \
+a raw product requirements document in any shape — bullet notes, user stories, \
+a full formal PRD, a rambling idea dump. Output: a BUILD BRIEF in the exact \
+language the Harness Architect consumes. Losing a stated requirement is a bug; \
+inventing an unstated one is a bug (put defaults under Assumptions instead).
+
+The factory you compile for:
+- Orchestration patterns (exactly one): pipeline | fanout | expert_pool | \
+producer_reviewer | supervisor | hierarchical.
+- Teams of 3-6 agents; each gets a role, system prompt, output format, tools \
+({tool_names} or mcp:<server>), and one skill file of behavioral rules.
+- LOOPS the factory and runtime can run — configure every one that helps; \
+this is where most of the quality comes from:
+  1. design loop — architect drafts the team, a critic scores it 0-10 against \
+a rubric, architect revises until it clears the bar.
+  2. review loop — the producer_reviewer pattern: a reviewer agent critiques \
+the producer's output in rounds until it approves.
+  3. eval loop (/loop) — run the harness, judge the output against the quality \
+gate (or a deterministic shell verifier), retry with the judge's feedback.
+  4. goal loop (/goal) — plan a milestone checklist, one harness run per step, \
+check off, replan on failure; resumable across sessions.
+
+Respond with EXACTLY this markdown skeleton — no preamble, no fences:
+
+# BUILD BRIEF: <short_snake_case_name>
+
+## Mission
+One tight paragraph: what this harness does, for whom, and the job-to-be-done.
+
+## Deliverable & bar
+The concrete artifact each run must produce, and what "excellent" means for it \
+— measurable, not vibes.
+
+## Team shape
+pattern: <one pattern> — <one-line why it fits this work>
+seats:
+- <agent_name> — <role in one line> — tools: <comma list>
+
+## Loops
+- design loop: <rounds + the one thing the critic must be strictest about>
+- review loop: <who reviews whom + concrete approve criteria; or "not needed — why">
+- eval loop: <retry budget + judge criteria, or a deterministic shell verify \
+command if the deliverable is checkable by machine>
+- goal loop: <the milestone checklist shape for big multi-run goals; or "not \
+needed — why">
+
+## Quality gate
+4-6 crisp, CHECKABLE criteria an LLM judge scores the output against.
+
+## Constraints & out of scope
+Hard limits from the PRD: platforms, formats, budgets, things explicitly excluded.
+
+## Assumptions
+Every default you chose for something the PRD left unspecified, one per line."""
+
+
+def compile_prd(prd: str, *,
+                model: str = "anthropic/claude-sonnet-4-6") -> str:
+    """Compile a raw PRD into a structured build brief the architect consumes.
+
+    The brief speaks the architect's vocabulary (patterns, seats, tools, the
+    four loops), so feeding it to build_harness() gives the design/critique
+    loop far more signal than a one-line prompt.
+    """
+    provider, m = api.resolve(model)
+    system = PRD_COMPILER_SYSTEM.format(tool_names=", ".join(sorted(REGISTRY)))
+    resp = provider.chat(model=m, system=system,
+                         messages=[{"role": "user", "content": prd[:60000]}],
+                         max_tokens=2500)
+    return resp.text.strip()
 
 
 def _extract_json(text: str) -> str:
@@ -207,6 +296,13 @@ def build_harness(prompt: str, *, output_root: str = "harnesses",
     skills_bodies = design.pop("skills", {})
     criteria = design.pop("quality_criteria", [])
     design["eval"] = {"quality_criteria": criteria}
+    # a bad color or malformed quick-command must never sink a whole build
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", str(design.get("accent") or "")):
+        design.pop("accent", None)
+    design["commands"] = [
+        c for c in (design.get("commands") or [])
+        if isinstance(c, dict) and c.get("task")
+        and re.fullmatch(r"[a-z][a-z0-9_-]{0,23}", str(c.get("name") or ""))]
     spec = HarnessSpec.from_dict(design)   # validates pattern/flow/supervisor/command
 
     harness_dir = Path(output_root) / spec.name

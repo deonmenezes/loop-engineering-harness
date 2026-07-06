@@ -75,3 +75,4 @@ loop:
   replan_on_failure: true
   step_verify: judge
 mcp_servers: []
+accent: '#5B9DD9'

@@ -311,8 +311,29 @@ def load_theme(name: str) -> dict:
                "cursor": "#aeafad"}}
 
 
+def _accent_override() -> str | None:
+    """Accent priority: user's /accent choice > the harness's own accent
+    (architect-picked, harness.json) > the theme's accent."""
+    ui = _ui_state().get("accent")
+    if ui == "theme":
+        return None
+    if isinstance(ui, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", ui):
+        return ui
+    a = str(CFG.get("accent") or "")
+    return a if re.fullmatch(r"#[0-9a-fA-F]{6}", a) else None
+
+
+def _build_styles() -> Styles:
+    theme = load_theme(THEME_NAME)
+    ov = _accent_override()
+    if ov:
+        theme = json.loads(json.dumps(theme))
+        theme["colors"]["accent"] = ov
+    return Styles(theme)
+
+
 THEME_NAME = _ui_state().get("theme", "dark")
-S = Styles(load_theme(THEME_NAME))
+S = _build_styles()
 
 
 def set_theme(name: str) -> bool:
@@ -320,8 +341,23 @@ def set_theme(name: str) -> bool:
     if name not in theme_names():
         return False
     THEME_NAME = name
-    S = Styles(load_theme(name))
+    S = _build_styles()
     _save_ui_state(theme=name)
+    return True
+
+
+def set_accent(value: str) -> bool:
+    """'#RRGGBB' pins a color, 'harness' returns to the built-in accent,
+    'theme' uses whatever the current theme says."""
+    global S
+    v = value.strip()
+    if v.lower() in ("theme", "harness"):
+        _save_ui_state(accent="theme" if v.lower() == "theme" else None)
+    elif re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+        _save_ui_state(accent=v)
+    else:
+        return False
+    S = _build_styles()
     return True
 
 
@@ -2215,9 +2251,11 @@ SLASH_COMMANDS = [
     ("/help", "commands and keys"),
     ("/agents", "the team: who runs, on what model, with which tools"),
     ("/prompts", "where every architectural prompt lives (the anatomy)"),
+    ("/skills", "the craft: each agent's behavioral-rules file"),
     ("/memory", "durable memory: MEMORY.md, saved facts, past sessions"),
     ("/model", "hot-swap every agent onto one model (blank = reset)"),
     ("/theme", "switch theme: " + ", ".join(theme_names())),
+    ("/accent", "accent color: #RRGGBB | harness | theme"),
     ("/auth", "show detected LLM credentials (env + local CLI logins)"),
     ("/mcp", "list connected MCP servers and their tools"),
     ("/loop", "run a task retried until the quality gate passes"),
@@ -2227,6 +2265,17 @@ SLASH_COMMANDS = [
     ("/clear", "clear the conversation"),
     ("/quit", "exit"),
 ]
+
+# domain quick-commands the architect designed for THIS harness — a slash
+# command per move users make constantly ({args} is replaced by what follows)
+CUSTOM_COMMANDS = {c["name"]: c for c in CFG.get("commands") or []
+                   if isinstance(c, dict) and c.get("name") and c.get("task")
+                   and not any("/" + c["name"] == s for s, _ in SLASH_COMMANDS)}
+SLASH_COMMANDS += [("/" + c["name"],
+                    c.get("description", "quick command") + "  ◆")
+                   for c in CUSTOM_COMMANDS.values()]
+
+PLACEHOLDER = "a task for {{TITLE}} · tab for commands · /help"
 
 HELP_MD = """\
 **chat**
@@ -2247,7 +2296,8 @@ HELP_MD = """\
 - `Up`/`Down` input history · `Ctrl+C` cancel run / quit
 
 **team & tools**
-- `/agents` `/prompts` `/memory` `/mcp` `/model <provider/model>` `/theme <name>`
+- `/agents` `/prompts` `/skills` `/memory` `/mcp` `/model <provider/model>`
+- `/theme <name>` · `/accent #RRGGBB|harness|theme` — the look is yours
 
 traces: `runs/*.jsonl` · history: `~/.{command}_history` · hooks: `hooks/`
 """
@@ -2643,8 +2693,12 @@ class PiTUI:
         if cmd in ("quit", "exit", "q"):
             self.alive = False
         elif cmd == "help":
-            self.add(Msg("info", text=HELP_MD.format(name=CFG["name"],
-                                                     command=COMMAND)))
+            text = HELP_MD.format(name=CFG["name"], command=COMMAND)
+            if CUSTOM_COMMANDS:
+                text += "\n**quick commands (built for this harness)**\n" + \
+                    "\n".join(f"- `/{c['name']}` — {c.get('description', '')}"
+                              for c in CUSTOM_COMMANDS.values())
+            self.add(Msg("info", text=text))
         elif cmd == "agents":
             rows = []
             for a in CFG["agents"]:
@@ -2674,6 +2728,40 @@ class PiTUI:
                 rows.append("- §4 output `harness.json` output_format · "
                             "§5 safety generated from guardrails")
             self.add(Msg("info", text="\n".join(rows)))
+        elif cmd == "skills":
+            sdir = HERE / "skills"
+            files = sorted(sdir.glob("*.md")) if sdir.exists() else []
+            if arg:
+                target = sdir / (arg if arg.endswith(".md") else arg + ".md")
+                if target.exists():
+                    self.add(Msg("info", text=target.read_text()))
+                else:
+                    self.status = f"no skill '{arg}' — /skills lists them"
+            elif not files:
+                self.add(Msg("info", text="no skill files yet — they live in "
+                             "`skills/*.md` (anatomy §3, the craft)"))
+            else:
+                rows = ["**skills** — behavioral rules each agent carries "
+                        "(`/skills <name>` shows one):", ""]
+                owners = {sk if sk.endswith(".md") else sk + ".md": a["name"]
+                          for a in CFG["agents"] for sk in a.get("skills", [])}
+                for f in files:
+                    head = next((ln.lstrip("# ").strip()
+                                 for ln in f.read_text().splitlines()
+                                 if ln.strip()), "")
+                    who = owners.get(f.name, "—")
+                    rows.append(f"- **{f.stem}** ({who}) — "
+                                f"{head[:70]} ~{len(f.read_text()) // 4} tok")
+                self.add(Msg("info", text="\n".join(rows)))
+        elif cmd == "accent":
+            if not arg:
+                cur = _accent_override() or S.theme["colors"]["accent"]
+                self.status = (f"accent {cur} — /accent #RRGGBB | harness "
+                               f"(built-in {CFG.get('accent') or '—'}) | theme")
+            elif set_accent(arg):
+                self.status = f"accent → {arg}"
+            else:
+                self.status = "usage: /accent #RRGGBB | harness | theme"
         elif cmd == "memory":
             md = HERE / "memory" / "MEMORY.md"
             body = COMMENT_RE.sub("", md.read_text()).strip() \
@@ -2760,6 +2848,13 @@ class PiTUI:
             self.status = ("upgrading every segment"
                            + (" from PRD" if prd else " (no PRD — general upskill)"))
             self.start_worker(lambda: uploop(prd, rounds=1))
+        elif cmd in CUSTOM_COMMANDS:
+            c = CUSTOM_COMMANDS[cmd]
+            if "{args}" in c["task"] and not arg:
+                self.status = f"usage: /{cmd} <args> — {c.get('description', '')}"
+            else:
+                self.start_run(c["task"].replace("{args}", arg).strip(),
+                               gate=False)
         else:
             self.status = f"unknown command /{cmd} — /help"
 
@@ -2952,6 +3047,10 @@ class PiTUI:
         lines.append("")
         lines.append("  " + S.muted_italic.render(
             "type a task and press enter — /help for commands"))
+        if CUSTOM_COMMANDS:
+            lines.append("  " + S.muted.render(
+                "quick commands: " + "  ".join(
+                    "/" + n for n in CUSTOM_COMMANDS)))
         detected = [f"{p} ({src})" for p, (ok, src) in auth_status().items()
                     if ok]
         miss = missing_keys()
@@ -3001,12 +3100,12 @@ class PiTUI:
             bottom.append("  " + S.accent.render(self.status))
         if self.state == "idle":
             bottom.append("")
-            bottom.append("  " + S.muted.render(
-                "Enter: send  Alt+Enter: newline  Tab: complete"))
-            # pi/Claude-Code-style input: a ❯ prompt framed by two double rules
-            rule = "  " + S.border.render("═" * (width - 4))
+            # Claude-Code/pi-mono frame: full-width rule, ❯ input (placeholder
+            # when empty), full-width rule, then a status line under the frame
+            rule = S.border.render("─" * width)
             bottom.append(rule)
-            avail = width - 6
+            avail = width - 4
+            empty = not self.editor.text()
             for i, line in enumerate(self.editor.lines):
                 off = 0
                 if i == self.editor.row and self.editor.col > avail - 1:
@@ -3017,9 +3116,20 @@ class PiTUI:
                     cur_ch = seg[c] if c < len(seg) else " "
                     seg = (seg[:c] + "\x1b[7m" + cur_ch + "\x1b[27m"
                            + (seg[c + 1:] if c < len(seg) else ""))
+                if i == 0 and empty:
+                    seg += " " + S.muted_italic.render(
+                        truncate(PLACEHOLDER, max(avail - 4, 8)))
                 prompt = S.accent_bold.render("❯") if i == 0 else " "
-                bottom.append("  " + prompt + " " + seg)
+                bottom.append(" " + prompt + " " + seg)
             bottom.append(rule)
+            left = f" ⛭ {COMMAND} · {CFG['pattern']}" \
+                + (f" · {MODEL_OVERRIDE}" if MODEL_OVERRIDE else "")
+            right = "enter send · alt+enter newline · tab menu · /help "
+            pad = width - visible_len(left) - visible_len(right)
+            if pad > 1:
+                bottom.append(S.muted.render(left + " " * pad + right))
+            else:
+                bottom.append(S.muted.render(truncate(left, width)))
             if self.ac_open:
                 for i, (name, desc) in enumerate(self.ac_items[:6]):
                     row = truncate(f" {name}  {desc}", width - 6)
@@ -3633,6 +3743,8 @@ def scaffold(spec, harness_dir: str | Path) -> Path:
     (d / "harness.json").write_text(json.dumps({
         "name": spec.name, "title": title, "description": desc,
         "command": command,
+        "accent": getattr(spec, "accent", "") or "",
+        "commands": getattr(spec, "commands", []) or [],
         "pattern": spec.pattern, "flow": spec.flow,
         "supervisor": spec.supervisor,
         "agents": [{"name": a.name, "role": a.role, "model": a.model,

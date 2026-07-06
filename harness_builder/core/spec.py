@@ -78,6 +78,8 @@ class HarnessSpec:
     pattern: str                              # one of PATTERNS
     agents: list[AgentSpec]
     command: str = ""                         # friendly launcher name (e.g. youvid)
+    accent: str = ""                          # TUI accent hex the architect picks
+    commands: list = field(default_factory=list)  # [{name, description, task}]
     flow: list = field(default_factory=list)  # pattern-specific wiring (agent names)
     supervisor: str | None = None             # for supervisor/hierarchical patterns
     memory: MemorySpec = field(default_factory=MemorySpec)
@@ -102,6 +104,8 @@ class HarnessSpec:
             name=d["name"], description=d.get("description", ""),
             pattern=d["pattern"], agents=agents,
             command=d.get("command", ""),
+            accent=d.get("accent", "") or "",
+            commands=d.get("commands", []) or [],
             flow=d.get("flow", []), supervisor=d.get("supervisor"),
             memory=MemorySpec(**d.get("memory", {})),
             guardrails=GuardrailSpec(**d.get("guardrails", {})),
@@ -131,6 +135,14 @@ class HarnessSpec:
             raise ValueError(f"pattern must be one of {PATTERNS}, got '{self.pattern}'")
         if self.command and not re.fullmatch(r"[a-z][a-z0-9_-]{0,23}", self.command):
             raise ValueError(f"command must be short lowercase (got '{self.command}')")
+        if self.accent and not re.fullmatch(r"#[0-9a-fA-F]{6}", self.accent):
+            raise ValueError(f"accent must be a #RRGGBB hex (got '{self.accent}')")
+        for c in self.commands:
+            if not isinstance(c, dict) or not c.get("name") or not c.get("task"):
+                raise ValueError(f"each command needs name+task (got {c!r})")
+            if not re.fullmatch(r"[a-z][a-z0-9_-]{0,23}", c["name"]):
+                raise ValueError(f"command name must be short lowercase "
+                                 f"(got '{c['name']}')")
         names = [a.name for a in self.agents]
         if len(names) != len(set(names)):
             raise ValueError(f"duplicate agent names: {names}")
